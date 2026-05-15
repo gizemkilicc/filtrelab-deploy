@@ -1,13 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --background: #050505;
-  --foreground: #ededed;
-  --neon-blue: #00f0ff;
-  --neon-purple: #8a2be2;
-  --neon-pink: #ff0055;
-  --neon-green: #39ff14;
-  --bg-card: #111111;
+  /* Pure White / Light Gray Atmosphere */
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --neon-blue: #0ea5e9;
+  --neon-purple: #8b5cf6;
+  --neon-pink: #ec4899;
+  --neon-green: #10b981;
+  --bg-card: rgba(255, 255, 255, 0.4);
 }
 
 @theme inline {
@@ -23,23 +24,121 @@
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+  /* Hardware acceleration */
+  transform: translateZ(0);
 }
 
-.glass-card {
-  background: rgba(17, 17, 17, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+/* Light Theme: Frosted Glass */
+.liquid-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.4) 100%);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 1);
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 1),
+    0 12px 40px rgba(0, 0, 0, 0.05);
+  will-change: transform;
 }
 
-.neon-text-blue {
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.7);
+.liquid-glass-heavy {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.6) 100%);
+  backdrop-filter: blur(40px) saturate(200%);
+  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 1);
+  box-shadow: 
+    inset 0 1px 4px rgba(255, 255, 255, 1),
+    0 20px 60px rgba(0, 0, 0, 0.08);
+  will-change: transform;
 }
 
-.neon-border-blue {
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4), inset 0 0 10px rgba(0, 240, 255, 0.2);
+/* Glossy reflection overlay */
+.gloss-overlay {
+  position: relative;
+  overflow: hidden;
+}
+.gloss-overlay::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 50%;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.8) 0%, transparent 100%);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Glowing text (Light version) */
+.iridescent-text {
+  background: linear-gradient(to right, var(--neon-blue), var(--neon-purple), var(--neon-pink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-size: 300% auto;
+  animation: shine 12s linear infinite;
+  will-change: background-position;
+}
+
+@keyframes shine {
+  to { background-position: 300% center; }
+}
+
+/* Animations */
+@keyframes float {
+  0% { transform: translate3d(0, 0px, 0); }
+  50% { transform: translate3d(0, -12px, 0); }
+  100% { transform: translate3d(0, 0px, 0); }
+}
+
+@keyframes float-slow {
+  0% { transform: translate3d(0, 0px, 0) rotate(0deg); }
+  50% { transform: translate3d(0, -15px, 0) rotate(1deg); }
+  100% { transform: translate3d(0, 0px, 0) rotate(0deg); }
+}
+
+@keyframes float-particle {
+  0% { transform: translate3d(0, 0, 0) scale(1); opacity: 0; }
+  20% { opacity: 0.8; }
+  80% { opacity: 0.8; }
+  100% { transform: translate3d(0, -120px, 0) scale(1.5); opacity: 0; }
+}
+
+@keyframes zen-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  33% { transform: translate3d(10px, -15px, 0) scale(1.02); }
+  66% { transform: translate3d(-10px, 5px, 0) scale(0.98); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-float-slow {
+  animation: float-slow 10s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-particle {
+  animation: float-particle 12s linear infinite;
+  will-change: transform, opacity;
+}
+
+.animate-blob {
+  animation: zen-drift 15s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
