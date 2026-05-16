@@ -139,11 +139,17 @@ function DashboardContent() {
           <div className="lg:col-span-4 space-y-6">
             <AnimatedCard className="p-0 overflow-hidden" delay={0.1}>
               {isValidImageUrl(result.image) ? (
-                <div className="relative h-64 w-full">
-                  <Image src={result.image} alt={result.productName || "Ürün görseli"} fill className="object-cover" />
+                <div className="relative h-80 w-full bg-white rounded-t-3xl overflow-hidden">
+                  <Image
+                    src={result.image}
+                    alt={result.productName || "Ürün görseli"}
+                    fill
+                    className="object-contain p-4"
+                    sizes="(max-width: 768px) 100vw, 420px"
+                  />
                 </div>
               ) : (
-                <div className="flex h-64 w-full items-center justify-center bg-neutral-900 text-neutral-400">
+                <div className="flex h-80 w-full items-center justify-center bg-neutral-900 text-neutral-500 text-sm rounded-t-3xl">
                   Görsel bulunamadı
                 </div>
               )}
@@ -155,24 +161,25 @@ function DashboardContent() {
                 <h2 className="text-2xl font-bold mb-3 leading-tight">{result.productName}</h2>
                 <div className="text-3xl font-black text-[var(--neon-blue)] neon-text-blue mb-4">{result.price}</div>
                 
-                {result.rating > 0 && (
-                  <div className="flex items-center gap-4 pt-4 border-t border-white/10 text-sm">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-sm text-gray-400">İade Riski</span>
-                      <span className={`font-bold ${result.returnRisk === "Yüksek" ? "text-red-400" : result.returnRisk === "Orta" ? "text-yellow-400" : "text-green-400"}`}>
-                        {result.returnRisk}
-                      </span>
-                    </div>
-                    <div className="text-gray-400 border-l border-white/10 pl-4">
-                      <span>{result.reviewCount.toLocaleString("tr-TR")} Değerlendirme</span>
-                    </div>
-                    {result.questionCount && (
-                      <div className="text-gray-400 border-l border-white/10 pl-4">
-                        <span>{result.questionCount.toLocaleString("tr-TR")} Soru</span>
-                      </div>
-                    )}
+                <div className="flex items-center gap-4 pt-4 border-t border-white/10 text-sm">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm text-white/50">İade Riski</span>
+                    <span className={`font-bold ${result.returnRisk === "Yüksek" ? "text-red-400" : result.returnRisk === "Orta" ? "text-yellow-400" : "text-green-400"}`}>
+                      {result.returnRisk}
+                    </span>
                   </div>
-                )}
+                  <div className="text-white/50 border-l border-white/10 pl-4">
+                    {result.reviewCount > 0
+                      ? <span>{result.reviewCount.toLocaleString("tr-TR")} Değerlendirme</span>
+                      : <span className="text-white/30">Değerlendirme verisi yok</span>
+                    }
+                  </div>
+                  {result.questionCount && result.questionCount > 0 && (
+                    <div className="text-white/50 border-l border-white/10 pl-4">
+                      <span>{result.questionCount.toLocaleString("tr-TR")} Soru</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </AnimatedCard>
 
@@ -180,7 +187,7 @@ function DashboardContent() {
               <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="text-yellow-400" /> Alışveriş Psikolojisi Analizi
               </h3>
-              <p className="text-sm text-gray-400 italic">
+              <p className="text-sm text-white/70 leading-relaxed">
                 {result.shoppingBehavior}
               </p>
             </AnimatedCard>
@@ -238,7 +245,7 @@ function DashboardContent() {
             </div>
 
             {/* Final Verdict */}
-            <FinalVerdict decision={result.finalDecision} reason={(result.analysis || "").substring(0, 150) + (result.analysis && result.analysis.length > 150 ? "..." : "")} />
+            <FinalVerdict decision={result.finalDecision} reason={result.analysis || ""} />
 
             {/* Alternatives */}
             <motion.div
@@ -251,50 +258,58 @@ function DashboardContent() {
               <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <BrainCircuit className="text-[var(--neon-blue)]" /> Yapay Zeka Kararı
               </h3>
-              <p className="text-gray-300 leading-relaxed mb-6">
+              <p className="text-white/80 leading-relaxed mb-6">
                 {result.analysis}
               </p>
               
-              <h3 className="text-xl font-bold mb-6 flex items-center">
-                <Sparkles className="w-5 h-5 text-[var(--neon-blue)] mr-2" />
-                Daha İyi Alternatif Bulundu
-              </h3>
-              
               {(result.betterAlternatives || []).length > 0 ? (
-                <div className="grid grid-cols-1 gap-4">
-                  {(result.betterAlternatives || []).map((alt, idx) => (
-                    <Link 
-                      href={alt.url || "#"} 
-                      key={idx} 
-                      className="block group" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                    >
-                      <AnimatedCard className="flex items-center p-4 gap-4 bg-white/5 border-white/10 group-hover:bg-white/10 group-hover:border-[var(--neon-blue)]/30 transition-all cursor-pointer">
-                        <div className="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0">
-                          {isValidImageUrl(alt.image) ? (
-                            <Image src={alt.image} alt={alt.name || "Ürün görseli"} fill className="object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-neutral-400 text-xs text-center p-1 leading-tight">
-                              Görsel Yok
+                <>
+                  <h3 className="text-xl font-bold mb-6 flex items-center">
+                    <Sparkles className="w-5 h-5 text-[var(--neon-blue)] mr-2" />
+                    Daha İyi Alternatif Bulundu
+                  </h3>
+                  <div className="grid grid-cols-1 gap-4">
+                    {(result.betterAlternatives || []).map((alt, idx) => (
+                      <Link
+                        href={alt.url || "#"}
+                        key={idx}
+                        className="block group"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <AnimatedCard className="flex items-center p-4 gap-4 bg-white/5 border-white/10 group-hover:bg-white/10 group-hover:border-[var(--neon-blue)]/30 transition-all cursor-pointer">
+                          <div className="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0 bg-white">
+                            {isValidImageUrl(alt.image) ? (
+                              <Image src={alt.image} alt={alt.name || "Ürün görseli"} fill className="object-contain p-1" sizes="96px" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center bg-neutral-800 text-neutral-500 text-xs text-center p-1 leading-tight">
+                                Görsel Yok
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              {alt.platform && (
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/10">
+                                  {alt.platform}
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <h4 className="font-bold text-lg group-hover:text-[var(--neon-blue)] transition-colors">{alt.name}</h4>
-                          <p className="text-lg text-[var(--neon-blue)] font-black mt-1">{alt.price}</p>
-                          <p className="text-sm text-gray-400 mt-2 line-clamp-2">{alt.reason}</p>
-                        </div>
-                        <div className="hidden sm:flex px-4 py-2 rounded-lg bg-[var(--neon-blue)]/10 text-[var(--neon-blue)] text-sm font-bold border border-[var(--neon-blue)]/20 whitespace-nowrap">
-                          Ürüne Git
-                        </div>
-                      </AnimatedCard>
-                    </Link>
-                  ))}
-                </div>
+                            <h4 className="font-bold text-base group-hover:text-[var(--neon-blue)] transition-colors">{alt.name}</h4>
+                            <p className="text-lg text-[var(--neon-blue)] font-black mt-1">{alt.price}</p>
+                            <p className="text-sm text-white/60 mt-1 leading-relaxed">{alt.reason}</p>
+                          </div>
+                          <div className="hidden sm:flex px-4 py-2 rounded-lg bg-[var(--neon-blue)]/10 text-[var(--neon-blue)] text-sm font-bold border border-[var(--neon-blue)]/20 whitespace-nowrap">
+                            Ürüne Git
+                          </div>
+                        </AnimatedCard>
+                      </Link>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <AnimatedCard className="text-center p-8 border-dashed border-white/20 bg-transparent">
-                  <p className="text-gray-400">Bu ürün için şu anda daha iyi alternatif bulunamadı.</p>
+                  <p className="text-gray-400">Bu ürün için doğrulanmış alternatif bulunamadı.</p>
                 </AnimatedCard>
               )}
             </motion.div>

@@ -14,7 +14,7 @@ TR_MAP = {
 }
 
 # Image URL patterns that indicate logos/placeholders to reject
-_BAD_IMAGE_PATTERNS = ("logo", "icon", "svg", "placeholder", "default", "blank", "spinner")
+_BAD_IMAGE_PATTERNS = ("logo", "icon", "svg", "placeholder", "default", "blank", "spinner", "badge", "banner", "favicon")
 _GOOD_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
@@ -101,39 +101,74 @@ async def _extract_image_via_js(page) -> str | None:
     try:
         result = await page.evaluate("""
             () => {
-                // Priority 1: Trendyol CDN images (product images)
+                const BAD = ['logo', 'icon', 'svg', 'placeholder', 'blank', 'spinner', 'badge', 'banner'];
+                const isBad = src => BAD.some(b => src.toLowerCase().includes(b));
+                const isGood = src => src && src.startsWith('http') && !isBad(src);
+
+                function bestSrc(img) {
+                    // Try srcset first (pick highest-res token)
+                    const ss = img.getAttribute('srcset') || '';
+                    if (ss) {
+                        const tokens = ss.split(',').map(s => s.trim().split(/\\s+/)[0]).filter(Boolean);
+                        // last token in srcset is usually highest res
+                        for (let i = tokens.length - 1; i >= 0; i--) {
+                            let t = tokens[i];
+                            if (!t.startsWith('http')) t = 'https:' + t;
+                            if (isGood(t)) return t;
+                        }
+                    }
+                    for (const attr of ['src', 'data-src', 'data-original', 'data-lazy-src', 'data-zoom-image']) {
+                        let v = img.getAttribute(attr) || '';
+                        if (!v) continue;
+                        if (v.startsWith('//')) v = 'https:' + v;
+                        if (v.startsWith('/')) v = 'https://www.trendyol.com' + v;
+                        if (isGood(v)) return v;
+                    }
+                    return null;
+                }
+
+                // Priority 1: Known Trendyol/CDN product image containers
+                const containers = [
+                    '.product-image-container img',
+                    '.gallery-container img',
+                    '.base-product-image img',
+                    '.product-slide img',
+                    '.slick-active img',
+                    '[class*="product-img"] img',
+                    '[class*="gallery"] img',
+                ];
+                for (const sel of containers) {
+                    const imgs = Array.from(document.querySelectorAll(sel));
+                    for (const img of imgs) {
+                        const src = bestSrc(img);
+                        if (src && (src.includes('.jpg') || src.includes('.webp') || src.includes('.png'))) return src;
+                    }
+                }
+
+                // Priority 2: Any CDN image (ty-cdn, dsmcdn, trendyol) sorted by natural size
                 const cdnImgs = Array.from(document.querySelectorAll('img'))
-                    .filter(img => {
-                        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-original') || '';
-                        return (src.includes('ty-cdn') || src.includes('trendyol.com')) &&
-                               !src.includes('logo') && !src.includes('icon') &&
-                               (src.includes('.jpg') || src.includes('.webp') || src.includes('.png'));
-                    })
-                    .sort((a, b) => (b.naturalWidth || b.width || 0) - (a.naturalWidth || a.width || 0));
+                    .map(img => ({ img, src: bestSrc(img) }))
+                    .filter(({ src }) => src && (
+                        src.includes('ty-cdn') || src.includes('dsmcdn') ||
+                        src.includes('trendyol') || src.includes('cdn')
+                    ) && !isBad(src))
+                    .sort((a, b) => (b.img.naturalWidth || b.img.width || 0) - (a.img.naturalWidth || a.img.width || 0));
 
-                if (cdnImgs.length > 0) {
-                    const img = cdnImgs[0];
-                    return img.src || img.getAttribute('data-src') || img.getAttribute('data-original');
-                }
+                if (cdnImgs.length > 0) return cdnImgs[0].src;
 
-                // Priority 2: Any large image on page
+                // Priority 3: Any large http image
                 const allImgs = Array.from(document.querySelectorAll('img'))
-                    .filter(img => {
-                        const src = img.src || img.getAttribute('data-src') || '';
-                        return src.startsWith('http') && !src.includes('logo') && !src.includes('icon');
-                    })
-                    .sort((a, b) => (b.naturalWidth || 0) - (a.naturalWidth || 0));
+                    .map(img => ({ img, src: bestSrc(img) }))
+                    .filter(({ src }) => isGood(src))
+                    .sort((a, b) => (b.img.naturalWidth || 0) - (a.img.naturalWidth || 0));
 
-                if (allImgs.length > 0) {
-                    const img = allImgs[0];
-                    return img.src || img.getAttribute('data-src');
-                }
-
-                return null;
+                return allImgs.length > 0 ? allImgs[0].src : null;
             }
         """)
-        if result and _is_valid_image(result):
-            return result
+        if result:
+            norm = _normalize_image_url(str(result))
+            if norm:
+                return norm
     except Exception as e:
         print(f"[scraper] JS image extraction error: {e}")
     return None
@@ -234,16 +269,34 @@ async def scrape_trendyol_product(url: str) -> dict:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--headless=new",
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--window-size=1280,900",
+                    "--ignore-certificate-errors",
+                ],
+            )
             context = await browser.new_context(
                 user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
+                    "Chrome/124.0.0.0 Safari/537.36"
                 ),
                 locale="tr-TR",
                 viewport={"width": 1280, "height": 900},
+                extra_http_headers={"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8"},
             )
+            await context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['tr-TR', 'tr', 'en-US', 'en']});
+                window.chrome = { runtime: {} };
+            """)
             page = await context.new_page()
 
             try:

@@ -1,5 +1,8 @@
+import traceback
+
 from .category_detector import detect_category
-from .trendyol_scraper import scrape_trendyol_product
+from .platform_detector import detect_platform
+from .product_scraper import scrape_product
 from .scoring import calculate_scores
 from .text_generator import generate_explanations
 from .alternative_scraper import get_alternatives
@@ -31,18 +34,46 @@ def _safe_int(val, default: int = 0) -> int:
 
 
 async def generate_analysis(url: str):
-    extracted_data = await scrape_trendyol_product(url)
+    print(f"[ANALYZE] incoming url = {url}")
 
-    product_name = _safe_str(extracted_data.get("productName"), "Ürün adı alınamadı")
+    platform = detect_platform(url)
+    print(f"[ANALYZE] detected platform = {platform}")
+
+    try:
+        extracted_data = await scrape_product(url)
+    except Exception as e:
+        print("[ANALYZE] scrape_product raised exception:")
+        traceback.print_exc()
+        raise ValueError(f"Ürün sayfası yüklenemedi: {e}")
+
+    print(f"[ANALYZE] scraped data keys = {list(extracted_data.keys())}")
+    print(f"[ANALYZE] productName = {extracted_data.get('productName')!r}")
+    print(f"[ANALYZE] price       = {extracted_data.get('price')!r}")
+    print(f"[ANALYZE] image       = {'YES' if extracted_data.get('image') else 'NO'}")
+    print(f"[ANALYZE] rating      = {extracted_data.get('rating')}")
+    print(f"[ANALYZE] reviewCount = {extracted_data.get('reviewCount')}")
+    print(f"[ANALYZE] dataSource  = {extracted_data.get('dataSource')}")
+
+    product_name_raw = extracted_data.get("productName")
+    image_raw = extracted_data.get("image")
+    price_raw = extracted_data.get("price")
+
+    # If scraper returned nothing useful, refuse to produce fake scores
+    if not product_name_raw and not image_raw and not price_raw:
+        raise ValueError(
+            "Bu site şu an desteklenmiyor veya ürün verisi alınamadı. "
+            "Lütfen geçerli bir ürün bağlantısı deneyin."
+        )
+
+    product_name = _safe_str(product_name_raw, "Ürün adı alınamadı")
     brand = _safe_str(extracted_data.get("brand"))
-    # image: only pass through if it's a real URL string
-    raw_image = extracted_data.get("image")
+
     image = (
-        raw_image
-        if isinstance(raw_image, str) and raw_image.strip().startswith("http")
+        image_raw
+        if isinstance(image_raw, str) and image_raw.strip().startswith("http")
         else None
     )
-    price_str = _safe_str(extracted_data.get("price"))
+    price_str = _safe_str(price_raw)
     rating = _safe_float(extracted_data.get("rating"))
     review_count = _safe_int(extracted_data.get("reviewCount"))
     question_count = _safe_int(extracted_data.get("questionCount"))
@@ -66,22 +97,20 @@ async def generate_analysis(url: str):
     # Detect category
     display_category = _safe_str(extracted_data.get("category"))
     if not display_category or display_category == "Genel":
-        cat_enum, _ = detect_category(url, extracted_data.get("slugKeywords", []))
-        category_map = {
-            "kozmetik": "Kozmetik / Cilt Bakımı",
-            "elektronik": "Elektronik / Kulaklık",
-            "laptop": "Bilgisayar / Laptop",
-            "telefon": "Akıllı Telefon",
-            "ayakkabi": "Giyim / Ayakkabı",
-            "canta": "Aksesuar / Çanta",
-            "saat": "Aksesuar / Saat",
-            "kahve": "Elektrikli Ev Aletleri / Kahve Makinesi",
-        }
-        display_category = category_map.get(cat_enum, "Genel")
+        cat_display, _ = detect_category(
+            product_name=product_name,
+            slug_keywords=extracted_data.get("slugKeywords", []),
+            breadcrumb=_safe_str(extracted_data.get("category")),
+            brand=brand,
+        )
+        display_category = cat_display if cat_display else "Genel"
 
-    # Scrape alternatives
+    # Scrape alternatives from the SAME platform
     try:
-        better_alternatives = await get_alternatives(display_category, product_name, price_val)
+        better_alternatives = await get_alternatives(
+            display_category, product_name, price_val,
+            brand=brand, platform=platform,
+        )
     except Exception as e:
         print(f"Alternatives error: {e}")
         better_alternatives = []
@@ -156,7 +185,7 @@ async def generate_analysis(url: str):
         "questionCount": question_count,
         "sellerScore": seller_score,
         "sourceUrl": _safe_str(extracted_data.get("sourceUrl"), url),
-        "sourcePlatform": _safe_str(extracted_data.get("sourcePlatform"), "Trendyol"),
+        "sourcePlatform": _safe_str(extracted_data.get("sourcePlatform"), "Web"),
         "fakeReviewRisk": fake_review_risk,
         "returnRisk": return_risk,
         "returnProbability": return_risk,
