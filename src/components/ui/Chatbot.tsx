@@ -18,7 +18,7 @@ export function Chatbot() {
   };
 
   return (
-    <div className="fixed bottom-8 right-8 z-[100] flex flex-col items-end pointer-events-none">
+    <div className="fixed bottom-10 right-6 z-[200] flex flex-col items-end pointer-events-none sm:right-8 md:bottom-12">
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -61,7 +61,7 @@ export function Chatbot() {
                 className="self-start max-w-[85%]"
               >
                 <div className="bg-white backdrop-blur-3xl rounded-[1.25rem] rounded-tl-sm p-4 text-[14px] text-gray-800 font-light leading-relaxed shadow-[0_4px_15px_rgba(0,0,0,0.04),inset_0_1px_3px_rgba(255,255,255,1)] border border-white/80">
-                  Hoş geldin. Ben FiltreLAB AI. Kusursuz stili bulmak ve ürünleri analiz etmek için buradayım. ✨
+                  Hoş geldin. Ben FiltreLAB AI. Ürünleri analiz etmek ve daha iyi seçim yapmanı sağlamak için buradayım.
                 </div>
               </motion.div>
             </div>

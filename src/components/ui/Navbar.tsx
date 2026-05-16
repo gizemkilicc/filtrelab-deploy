@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Search, ShoppingCart, User, Menu } from "lucide-react";
+import { Search, ShoppingCart, User, Menu, Sparkles } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { useState } from "react";
@@ -32,18 +32,13 @@ export function Navbar() {
             </span>
           </Link>
 
-          {/* Links */}
-          <div className="hidden md:flex items-center space-x-9">
-            <Link href="#" className="text-[14px] font-medium text-gray-500 hover:text-gray-900 transition-colors">
-              Kadın
-            </Link>
-            <Link href="#" className="text-[14px] font-medium text-gray-500 hover:text-gray-900 transition-colors">
-              Erkek
-            </Link>
-            <Link href="#" className="text-[14px] font-medium text-gray-500 hover:text-gray-900 transition-colors">
-              Aksesuar
-            </Link>
-            <Link href="#" className="text-[14px] font-bold text-gray-900 hover:opacity-70 transition-opacity drop-shadow-sm">
+          {/* Desktop Navigation */}
+          <div className="hidden md:flex items-center space-x-1">
+            <Link href="/#products" className="px-4 py-2 rounded-full text-[15px] font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100/50 transition-colors">Kadın</Link>
+            <Link href="/#products" className="px-4 py-2 rounded-full text-[15px] font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100/50 transition-colors">Erkek</Link>
+            <Link href="/#products" className="px-4 py-2 rounded-full text-[15px] font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100/50 transition-colors">Aksesuar</Link>
+            <Link href="/dashboard" className="px-4 py-2 rounded-full text-[15px] font-medium text-purple-600 bg-purple-50/50 hover:bg-purple-100/50 transition-colors flex items-center">
+              <Sparkles className="w-4 h-4 mr-1.5" />
               AI Tavsiyeleri
             </Link>
           </div>

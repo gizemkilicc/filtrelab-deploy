@@ -14,7 +14,7 @@ export const featuredProducts: Product[] = [
     name: "Minimalist Yün Kaban",
     brand: "Nordic Atelier",
     price: "₺3,499",
-    image: "https://images.unsplash.com/photo-1539533113208-f6df8cc8b543?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+    image: "/images/ui-cards.png",
     mockUrl: "https://shopwise.example.com/p/minimalist-yun-kaban",
     aiScore: 92
   },
@@ -23,7 +23,7 @@ export const featuredProducts: Product[] = [
     name: "Saten Gece Elbisesi",
     brand: "Lumina",
     price: "₺2,150",
-    image: "https://images.unsplash.com/photo-1566150905458-1bf1fc113f0d?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+    image: "/images/crystal-bg.png",
     mockUrl: "https://shopwise.example.com/p/saten-gece-elbisesi",
     aiScore: 88
   },
@@ -32,7 +32,7 @@ export const featuredProducts: Product[] = [
     name: "Deri Crossbody Çanta",
     brand: "Aura Milano",
     price: "₺1,899",
-    image: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+    image: "/images/navy_spheres.png",
     mockUrl: "https://shopwise.example.com/p/deri-crossbody-canta",
     aiScore: 95
   },
@@ -41,7 +41,7 @@ export const featuredProducts: Product[] = [
     name: "Premium Sneaker",
     brand: "UrbanStride",
     price: "₺2,750",
-    image: "https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
+    image: "/images/bg-navy.png",
     mockUrl: "https://shopwise.example.com/p/premium-sneaker",
     aiScore: 84
   }

@@ -76,7 +76,7 @@ function DashboardContent() {
         >
           <div className="text-center mb-12">
             <BrainCircuit className="w-16 h-16 text-[var(--neon-blue)] mx-auto mb-6 animate-pulse" />
-            <h2 className="text-3xl font-bold mb-2">FiltreLab Analiz Motoru Devrede</h2>
+            <h2 className="text-3xl font-bold mb-2">FiltreLAB Analiz Motoru Devrede</h2>
             <p className="text-gray-400">Bu ürün için binlerce veri noktası analiz ediliyor...</p>
           </div>
           <ScanTimeline steps={timelineSteps} />

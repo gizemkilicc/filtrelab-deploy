@@ -59,11 +59,9 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 <Fingerprint className="w-6 h-6 text-gray-700 drop-shadow-sm" />
               </div>
               <h2 className="text-2xl font-semibold tracking-tight text-gray-900 drop-shadow-sm">
-                {isLogin ? "Filtre" : "Yeni"} <span className="font-bold">{isLogin ? "LAB'a" : "Hesap"}</span> {isLogin ? "Giriş Yap" : "Oluştur"}
+                {isLogin ? "FiltreLAB'a Giriş Yap" : "Yeni Hesap Oluştur"}
               </h2>
-              <p className="text-sm text-gray-500 mt-1.5 font-light tracking-wide">
-                Kusursuz stil asistanınız sizi bekliyor.
-              </p>
+              <p className="text-gray-500 font-light text-[17px] tracking-wide mt-2">FiltreLAB tarafından onaylanmış premium seçimler.</p>
             </div>
 
             {/* Form */}
@@ -94,6 +92,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   className="w-full bg-white/60 border border-white rounded-xl px-4 py-3.5 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-white focus:bg-white transition-all shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)] font-light text-[15px]"
                 />
               </div>
+
 
               {/* Soft White Soft Button */}
               <button className="w-full relative group overflow-hidden rounded-xl mt-6 border border-white shadow-[0_4px_15px_rgba(0,0,0,0.05),inset_0_2px_4px_rgba(255,255,255,1)] transition-all active:scale-[0.98] bg-white/80 hover:bg-white backdrop-blur-md">

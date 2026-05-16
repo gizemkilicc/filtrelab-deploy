@@ -15,7 +15,7 @@ export function FeaturedProducts() {
   };
 
   return (
-    <section className="w-full max-w-7xl mx-auto mt-24 px-6 relative z-10">
+    <section id="products" className="w-full max-w-7xl mx-auto mt-24 px-6 relative z-10">
       <div className="flex items-end justify-between mb-14">
         <div>
           <h2 className="text-4xl md:text-5xl font-medium tracking-tight mb-3 text-gray-900 drop-shadow-sm">
