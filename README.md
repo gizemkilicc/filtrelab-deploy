@@ -21,22 +21,30 @@
 
 ## Kurulum ve Çalıştırma 💻
 
-Projeyi kendi bilgisayarınızda çalıştırmak için aşağıdaki adımları izleyin:
+### Backend (FastAPI + Playwright)
 
-1. Depoyu klonlayın veya proje dosyalarını indirin.
-2. Terminali açın ve proje dizinine gidin:
-   ```bash
-   cd shopwise-ai
-   ```
-3. Gerekli bağımlılıkları yükleyin:
-   ```bash
-   npm install
-   ```
-4. Geliştirme sunucusunu başlatın:
-   ```bash
-   npm run dev
-   ```
-5. Tarayıcınızda [http://localhost:3000](http://localhost:3000) adresine giderek projeyi görüntüleyin.
+```bash
+cd backend
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Backend çalıştıktan sonra `http://127.0.0.1:8000/docs` adresinde API dokümantasyonuna ulaşabilirsiniz.
+
+### Frontend (Next.js)
+
+Yeni bir terminal açıp proje kök dizininde:
+
+```bash
+npm install
+npm run dev -- --webpack
+```
+
+Tarayıcınızda [http://localhost:3000](http://localhost:3000) adresine gidin.
+
+> **Not:** Backend çalışmadan frontend analiz yapamaz. Önce backend'i başlatın.
 
 ## Nasıl Test Edilir? 🧪
 

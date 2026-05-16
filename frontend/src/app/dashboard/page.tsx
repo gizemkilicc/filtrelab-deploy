@@ -12,6 +12,14 @@ import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, 
 import Link from "next/link";
 import Image from "next/image";
 
+function isValidImageUrl(url: unknown): url is string {
+  return (
+    typeof url === "string" &&
+    url.trim() !== "" &&
+    (url.startsWith("https://") || url.startsWith("http://"))
+  );
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const url = searchParams.get("url") || "";
@@ -130,7 +138,7 @@ function DashboardContent() {
           {/* Left Column: Product Info */}
           <div className="lg:col-span-4 space-y-6">
             <AnimatedCard className="p-0 overflow-hidden" delay={0.1}>
-              {result.image ? (
+              {isValidImageUrl(result.image) ? (
                 <div className="relative h-64 w-full">
                   <Image src={result.image} alt={result.productName || "Ürün görseli"} fill className="object-cover" />
                 </div>
@@ -230,7 +238,7 @@ function DashboardContent() {
             </div>
 
             {/* Final Verdict */}
-            <FinalVerdict decision={result.finalDecision} reason={result.analysis.substring(0, 150) + "..."} />
+            <FinalVerdict decision={result.finalDecision} reason={(result.analysis || "").substring(0, 150) + (result.analysis && result.analysis.length > 150 ? "..." : "")} />
 
             {/* Alternatives */}
             <motion.div
@@ -252,9 +260,9 @@ function DashboardContent() {
                 Daha İyi Alternatif Bulundu
               </h3>
               
-              {result.betterAlternatives.length > 0 ? (
+              {(result.betterAlternatives || []).length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {result.betterAlternatives.map((alt, idx) => (
+                  {(result.betterAlternatives || []).map((alt, idx) => (
                     <Link 
                       href={alt.url || "#"} 
                       key={idx} 
@@ -264,7 +272,7 @@ function DashboardContent() {
                     >
                       <AnimatedCard className="flex items-center p-4 gap-4 bg-white/5 border-white/10 group-hover:bg-white/10 group-hover:border-[var(--neon-blue)]/30 transition-all cursor-pointer">
                         <div className="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0">
-                          {alt.image ? (
+                          {isValidImageUrl(alt.image) ? (
                             <Image src={alt.image} alt={alt.name || "Ürün görseli"} fill className="object-cover" />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-neutral-400 text-xs text-center p-1 leading-tight">

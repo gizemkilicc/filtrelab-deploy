@@ -64,7 +64,7 @@ export const runAIAnalysis = async (url: string, onProgress: (step: number, mess
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
 
     const response = await fetch(`${API_URL}/analyze`, {
       method: "POST",
