@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 
+
 class AlternativeProduct(BaseModel):
     name: str
     price: str
@@ -9,8 +10,22 @@ class AlternativeProduct(BaseModel):
     url: str
     isDirectProductUrl: bool
 
+
 class AnalyzeRequest(BaseModel):
     url: str
+    includeReviews: bool = False
+
+
+class ReviewRequest(BaseModel):
+    url: str
+    maxReviews: Optional[int] = None
+
+
+class ReviewsExportRequest(BaseModel):
+    url: str
+    maxReviews: Optional[int] = None
+    format: str = "json"
+
 
 class AnalyzeResponse(BaseModel):
     extractedFromUrl: bool

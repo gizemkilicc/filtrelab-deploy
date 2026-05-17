@@ -1,42 +1,51 @@
+SCORING_VERSION = "deterministic-v1"
+
+
 def calculate_scores(
     rating: float,
-    review_count: int,
-    question_count: int,
+    review_count: int | None,
+    question_count: int | None,
     seller_score: float,
     price_val: float,
     alternatives: list,
     category: str,
 ):
+    if not rating or not price_val:
+        raise ValueError("Insufficient reliable scoring data.")
+
     rating = float(rating or 0)
-    review_count = int(review_count or 0)
-    question_count = int(question_count or 0)
+    review_count_value = int(review_count or 0)
+    question_count_value = int(question_count or 0)
     seller_score = float(seller_score or 0)
+    price_val = float(price_val or 0)
 
     # ── 1. Trust Score ──────────────────────────────────────────────────────
     rating_contribution = (rating / 5.0) * 70 if rating > 0 else 0
 
-    if review_count >= 10000:
+    if review_count_value >= 10000:
         review_contribution = 20
-    elif review_count >= 1000:
+    elif review_count_value >= 1000:
         review_contribution = 15
-    elif review_count >= 100:
+    elif review_count_value >= 100:
         review_contribution = 10
     else:
-        review_contribution = 3
+        review_contribution = 0
 
     seller_contribution = 10 if seller_score >= 8.5 else 0
 
     trust_score = min(100, int(rating_contribution + review_contribution + seller_contribution))
 
     # ── 2. Fake Review Risk ─────────────────────────────────────────────────
-    fake_risk = 50
+    fake_risk = 55
 
-    if review_count >= 10000:
+    if review_count_value >= 10000:
         fake_risk -= 25
-    elif review_count >= 1000:
+    elif review_count_value >= 1000:
         fake_risk -= 15
+    elif review_count_value >= 100:
+        fake_risk -= 8
 
-    if rating >= 4.9 and review_count < 100:
+    if rating >= 4.9 and review_count_value < 100:
         fake_risk += 25
     elif 4.0 <= rating <= 4.7:
         fake_risk -= 10
@@ -47,39 +56,27 @@ def calculate_scores(
     fake_review_risk = max(5, min(100, fake_risk))
 
     # ── 3. Price Performance ────────────────────────────────────────────────
-    alt_prices = []
-    if alternatives:
-        for alt in alternatives:
-            try:
-                p_str = (
-                    str(alt.get("price", ""))
-                    .replace(" TL", "")
-                    .replace("₺", "")
-                    .replace(".", "")
-                    .replace(",", ".")
-                    .strip()
-                )
-                if p_str:
-                    alt_prices.append(float(p_str))
-            except Exception:
-                continue
-
-    if alt_prices and price_val and price_val > 0:
-        avg_alt = sum(alt_prices) / len(alt_prices)
-        ratio = avg_alt / price_val
-        price_performance = round(min(9.8, max(3.0, ratio * 7.0)), 1)
-    elif rating >= 4.5:
-        price_performance = 8.5
+    # Deterministic demo rule: do not use live alternative scrape output for scores.
+    if rating >= 4.5:
+        base_price_performance = 7.0
     elif rating >= 4.0:
-        price_performance = 7.0
+        base_price_performance = 6.0
     else:
-        price_performance = 5.0
+        base_price_performance = 4.5
+
+    if price_val >= 3000:
+        price_penalty = 1.0
+    elif price_val >= 1000:
+        price_penalty = 0.5
+    else:
+        price_penalty = 0.0
+    price_performance = round(max(1.0, min(10.0, base_price_performance - price_penalty)), 1)
 
     # ── 4. Sentiment Score ──────────────────────────────────────────────────
     sentiment_score = round(rating * 2, 1) if rating else 0.0
 
     # ── 5. Return Risk ──────────────────────────────────────────────────────
-    if rating >= 4.4 and review_count >= 500:
+    if rating >= 4.4 and review_count_value >= 500:
         return_risk = "Düşük"
     elif rating >= 4.0:
         return_risk = "Orta"
@@ -89,29 +86,28 @@ def calculate_scores(
         return_risk = "Orta"  # unknown rating — don't punish unfairly
 
     # ── 6. Final Decision ───────────────────────────────────────────────────
-    alinabilir = (
-        rating >= 4.4
-        and review_count >= 500
-        and trust_score >= 70
-        and fake_review_risk <= 45
-        and return_risk == "Düşük"
-    )
-    onerilmez = rating > 0 and (
-        rating < 3.8
-        or trust_score < 45
-        or fake_review_risk >= 70
-        or return_risk == "Yüksek"
-    )
-
-    if alinabilir:
-        final_decision = "ALINABİLİR"
-    elif onerilmez:
+    if trust_score < 50 or fake_review_risk > 65:
         final_decision = "ÖNERİLMEZ"
-    else:
+    elif trust_score >= 75 and price_performance >= 6 and fake_review_risk <= 35:
+        final_decision = "ALINABİLİR"
+    elif trust_score >= 50:
         final_decision = "BEKLE"
+    else:
+        final_decision = "ÖNERİLMEZ"
+
+    scoring_inputs = {
+        "rating": rating,
+        "reviewCount": review_count,
+        "questionCount": question_count,
+        "sellerScore": seller_score,
+        "price": price_val,
+        "category": category,
+        "reviewCountUsedForScore": review_count_value,
+        "questionCountUsedForScore": question_count_value,
+    }
 
     print(
-        f"[SCORING] rating={rating} reviewCount={review_count} sellerScore={seller_score} "
+        f"[SCORING] version={SCORING_VERSION} rating={rating} reviewCount={review_count} sellerScore={seller_score} "
         f"→ trustScore={trust_score} fakeRisk={fake_review_risk} "
         f"returnRisk={return_risk} decision={final_decision}"
     )
@@ -123,4 +119,6 @@ def calculate_scores(
         "pricePerformance": price_performance,
         "returnRisk": return_risk,
         "finalDecision": final_decision,
+        "scoringInputs": scoring_inputs,
+        "scoringVersion": SCORING_VERSION,
     }

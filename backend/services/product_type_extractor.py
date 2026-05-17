@@ -72,8 +72,8 @@ _TYPES: list[dict] = [
             "yüz bakım", "cilt bakım",
         ],
         "queries": ["nemlendirici krem", "kuru cilt kremi", "yüz vücut bakım kremi", "cilt nemlendirici"],
-        "required": ["krem", "nemlendirici", "cream", "losyon", "balsam", "serum"],
-        "forbidden": ["parfüm", "deodorant", "maskara", "ruj", "far", "eyeliner", "oje", "saç boyası", "lamba", "telefon", "kıyafet", "ayakkabı"],
+        "required": ["krem", "nemlendirici", "cream", "balsam", "atoderm", "cerave", "avene", "bioderma", "la roche"],
+        "forbidden": ["parfüm", "deodorant", "maskara", "ruj", "far", "eyeliner", "oje", "saç boyası", "peeling", "scrub", "selülit", "selulit", "losyon", "lamba", "telefon", "kıyafet", "ayakkabı"],
     },
     {
         "name": "yüz temizleme jeli",
@@ -239,7 +239,7 @@ _TYPES: list[dict] = [
         "trigger": ["samsung galaxy", "iphone", "xiaomi", "redmi", "huawei", "akıllı telefon", "smartphone"],
         "queries": ["akıllı telefon android", "samsung galaxy telefon", "xiaomi telefon"],
         "required": ["telefon", "smartphone", "galaxy", "iphone", "redmi"],
-        "forbidden": ["krem", "parfüm", "lamba", "kıyafet", "kulaklık", "laptop", "tablet"],
+        "forbidden": ["krem", "parfüm", "lamba", "kıyafet", "kulaklık", "laptop", "tablet", "kılıf", "kilif", "case", "şarj", "sarj", "kablo", "adaptör", "adapter", "cam", "ekran koruyucu"],
     },
     {
         "name": "powerbank",
@@ -302,7 +302,7 @@ _TYPES: list[dict] = [
 # Main function
 # ---------------------------------------------------------------------------
 
-def extract_product_type(product_name: str, category: str) -> dict:
+def extract_product_type(product_name: str, category: str, brand: str = "", breadcrumb: str = "") -> dict:
     """
     Returns a dict with:
         name        — canonical type string
@@ -310,7 +310,8 @@ def extract_product_type(product_name: str, category: str) -> dict:
         required    — list[str], alt name must contain at least one
         forbidden   — list[str], alt name must contain none
     """
-    name_norm = _norm(product_name)
+    combined = " ".join([product_name or "", category or "", breadcrumb or "", brand or ""])
+    name_norm = _norm(combined)
 
     # Find the MOST SPECIFIC matching type (longer trigger phrase wins)
     best: dict | None = None
@@ -330,9 +331,11 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": list(best["queries"]),
             "required": list(best["required"]),
             "forbidden": list(best["forbidden"]),
+            "isSpecific": True,
         }
 
-    # Fallback — derive from category
+    # Fallback is intentionally non-specific. Callers should not use it for
+    # alternatives because product type mismatch is the main source of bad recs.
     cat_l = _norm(category)
     print(f"[product_type] no specific type found, falling back to category: {category!r}")
 
@@ -342,6 +345,7 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": ["cilt bakım ürünü", "kozmetik"],
             "required": ["krem", "serum", "tonik", "losyon", "jel", "bakım", "cilt"],
             "forbidden": ["lamba", "telefon", "laptop", "kıyafet", "ayakkabı", "hoparlör"],
+            "isSpecific": False,
         }
     if "aydinlatma" in cat_l or "lamba" in cat_l or "aydınlatma" in cat_l:
         return {
@@ -349,6 +353,7 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": ["led lamba aydınlatma", "bahçe lambası"],
             "required": ["lamba", "led", "aydınlatma", "ampul", "solar"],
             "forbidden": ["krem", "parfüm", "kıyafet", "telefon"],
+            "isSpecific": False,
         }
     if "giyim" in cat_l:
         return {
@@ -356,6 +361,7 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": ["giyim üst", "kıyafet"],
             "required": ["t-shirt", "gömlek", "sweatshirt", "pantolon", "elbise"],
             "forbidden": ["krem", "parfüm", "lamba", "telefon"],
+            "isSpecific": False,
         }
     if "ayakkabı" in cat_l:
         return {
@@ -363,6 +369,7 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": ["ayakkabı spor", "sneaker"],
             "required": ["ayakkabı", "sneaker", "bot"],
             "forbidden": ["krem", "parfüm", "lamba", "telefon"],
+            "isSpecific": False,
         }
     if "elektronik" in cat_l or "teknoloji" in cat_l:
         return {
@@ -370,6 +377,7 @@ def extract_product_type(product_name: str, category: str) -> dict:
             "queries": ["elektronik aksesuar"],
             "required": ["kulaklık", "hoparlör", "şarj", "kablo", "adaptör"],
             "forbidden": ["krem", "parfüm", "lamba", "kıyafet"],
+            "isSpecific": False,
         }
 
     # Generic fallback
@@ -378,4 +386,5 @@ def extract_product_type(product_name: str, category: str) -> dict:
         "queries": [],          # caller will use category-based queries
         "required": [],         # no required filter — accept anything
         "forbidden": [],        # no forbidden filter
+        "isSpecific": False,
     }

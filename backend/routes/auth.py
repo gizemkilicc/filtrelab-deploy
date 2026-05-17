@@ -6,18 +6,16 @@ from sqlalchemy.orm import Session
 
 from services.auth_service import (
     create_access_token,
-    create_email_verification_token,
     create_password_reset_token,
     create_user,
     decode_access_token,
     get_user_by_email,
     get_user_by_id,
     reset_password_with_token,
-    verify_email_token,
     verify_password,
 )
-from services.database import get_db
-from services.email_service import send_password_reset_email, send_verification_email
+from services.database import AnalysisHistory, get_db
+from services.email_service import send_password_reset_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,7 +27,9 @@ _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 class RegisterRequest(BaseModel):
     email: str
     password: str
-    name: str
+    firstName: str | None = None
+    lastName: str | None = None
+    name: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -50,6 +50,26 @@ class SendVerificationRequest(BaseModel):
     email: str
 
 
+def _user_payload(user, db: Session | None = None) -> dict:
+    first_name = (user.first_name or "").strip()
+    last_name = (user.last_name or "").strip()
+    if not first_name and not last_name and user.name:
+        parts = user.name.strip().split(" ", 1)
+        first_name = parts[0] if parts else ""
+        last_name = parts[1] if len(parts) > 1 else ""
+    payload = {
+        "id": user.id,
+        "firstName": first_name,
+        "lastName": last_name,
+        "name": user.name or f"{first_name} {last_name}".strip(),
+        "email": user.email,
+        "createdAt": user.created_at.isoformat() if user.created_at else None,
+    }
+    if db:
+        payload["analysisCount"] = db.query(AnalysisHistory).filter(AnalysisHistory.user_id == user.id).count()
+    return payload
+
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _parse_bearer(authorization: str | None) -> str | None:
@@ -63,25 +83,30 @@ def _parse_bearer(authorization: str | None) -> str | None:
 @router.post("/register")
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     email = body.email.strip().lower()
-    name = body.name.strip()
+    first_name = (body.firstName or "").strip()
+    last_name = (body.lastName or "").strip()
+    if (not first_name or not last_name) and body.name:
+        parts = body.name.strip().split(" ", 1)
+        first_name = first_name or (parts[0] if parts else "")
+        last_name = last_name or (parts[1] if len(parts) > 1 else "")
     password = body.password
 
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Geçersiz e-posta formatı.")
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalıdır.")
-    if not name:
-        raise HTTPException(status_code=400, detail="Ad Soyad boş olamaz.")
+    if not first_name:
+        raise HTTPException(status_code=400, detail="Ad boş olamaz.")
+    if not last_name:
+        raise HTTPException(status_code=400, detail="Soyad boş olamaz.")
     if get_user_by_email(db, email):
         raise HTTPException(status_code=409, detail="Bu e-posta adresi zaten kayıtlı.")
 
-    user = create_user(db, name=name, email=email, password=password)
-    token = create_email_verification_token(db, user.id)
-    send_verification_email(email, token)
+    user = create_user(db, first_name=first_name, last_name=last_name, email=email, password=password)
 
     return {
         "success": True,
-        "message": "Kayıt başarılı. Lütfen e-posta adresinizi doğrulayın.",
+        "message": "Kayıt başarılı. Giriş yapabilirsiniz.",
         "userId": user.id,
     }
 
@@ -99,14 +124,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     return {
         "success": True,
         "accessToken": access_token,
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "isVerified": user.is_verified,
-        },
-        "emailVerified": user.is_verified,
-        "message": None if user.is_verified else "E-posta adresinizi henüz doğrulamadınız.",
+        "user": _user_payload(user),
     }
 
 
@@ -142,23 +160,12 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
 
 @router.post("/send-verification-email")
 def resend_verification(body: SendVerificationRequest, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
-    user = get_user_by_email(db, email)
-    if user and not user.is_verified:
-        token = create_email_verification_token(db, user.id)
-        send_verification_email(email, token)
-    return {"success": True, "message": "Doğrulama e-postası gönderildi."}
+    return {"success": True, "message": "E-posta doğrulama bu sürümde gerekli değildir."}
 
 
 @router.get("/verify-email")
 def verify_email(token: str, db: Session = Depends(get_db)):
-    user = verify_email_token(db, token)
-    if not user:
-        raise HTTPException(
-            status_code=400,
-            detail="Geçersiz veya süresi dolmuş doğrulama bağlantısı.",
-        )
-    return {"success": True, "message": "E-posta adresiniz doğrulandı. Giriş yapabilirsiniz."}
+    return {"success": True, "message": "E-posta doğrulama bu sürümde gerekli değildir. Giriş yapabilirsiniz."}
 
 
 @router.get("/me")
@@ -178,10 +185,4 @@ def get_me(
     if not user:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
 
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "isVerified": user.is_verified,
-        "createdAt": user.created_at.isoformat(),
-    }
+    return _user_payload(user, db)

@@ -83,6 +83,8 @@ def _parse_price(raw: str) -> str:
 
 def _relevance_score(
     alt_name: str,
+    base_name: str,
+    category: str,
     required: list[str],
     forbidden: list[str],
     type_name: str,
@@ -91,14 +93,16 @@ def _relevance_score(
     has_image: bool = False,
 ) -> int:
     """
-    +60  required keyword found (mandatory — returns -1 if missing)
+    +60  product type / required keyword found (mandatory — returns -1 if missing)
     -100 forbidden keyword found (instant reject)
-    +20  type_name word in alt name
-    +10  price within 0.3×–3× of base price
-    +5   image present
-    Threshold: >= 60
+    +20  category match
+    +15  shared keywords with base product
+    +10  price within 0.5×–2× of base price
+    +5   image/metadata present
+    Threshold: >= 70
     """
     name_n = _norm(alt_name)
+    base_n = _norm(base_name)
 
     for kw in forbidden:
         if _norm(kw) in name_n:
@@ -111,9 +115,16 @@ def _relevance_score(
             return -1
     score = 60
 
-    type_words = [w for w in _norm(type_name).split() if len(w) > 3]
-    if type_words and any(w in name_n for w in type_words):
+    category_words = [w for w in _norm(category).replace("/", " ").split() if len(w) > 4]
+    if category_words and any(w in name_n for w in category_words):
         score += 20
+
+    shared_stop = {"icin", "ile", "ve", "the", "plus", "ultra", "yeni", "adet", "set"}
+    base_words = {w for w in _re.findall(r"[a-z0-9]+", base_n) if len(w) > 3 and w not in shared_stop}
+    alt_words = {w for w in _re.findall(r"[a-z0-9]+", name_n) if len(w) > 3 and w not in shared_stop}
+    shared = base_words & alt_words
+    if shared:
+        score += min(15, len(shared) * 5)
 
     if base_price > 0 and alt_price_str:
         try:
@@ -122,7 +133,7 @@ def _relevance_score(
                 .replace(" TL", "").replace("₺", "")
                 .replace(".", "").replace(",", ".").strip()
             )
-            if 0.3 * base_price <= p <= 3.0 * base_price:
+            if 0.5 * base_price <= p <= 2.0 * base_price:
                 score += 10
         except Exception:
             pass
@@ -165,7 +176,7 @@ _JS_TRENDYOL = """
     const nameEl = a.querySelector('span.product-name, [class="product-name"], [class*="product-name"]');
     const name = nameEl ? nameEl.textContent.trim() : alt;
     const prEl = a.querySelector('span.price-value, [class="price-value"], [class*="price-value"], [class*="prc-box-dscntd"]');
-    const price = prEl ? prEl.textContent.replace(/\s+/g,' ').trim() : '';
+    const price = prEl ? prEl.textContent.replace(/\\s+/g,' ').trim() : '';
     return { href: a.href, name: name.substring(0,120), price, src };
 }).filter(p => p.name && p.href.includes('-p-') && p.href.includes('trendyol.com'))
 """
@@ -259,7 +270,7 @@ _JS_N11 = """
     const nameEl = li.querySelector('h3, h2, [class*="name"], [class*="title"]');
     const name   = nameEl ? nameEl.textContent.trim().substring(0,120) : (img ? img.alt : '');
     const prEl   = li.querySelector('[class*="price"], [class*="Price"]');
-    const price  = prEl ? prEl.textContent.trim().replace(/\s+/g,' ') : '';
+    const price  = prEl ? prEl.textContent.trim().replace(/\\s+/g,' ') : '';
     return { href, name, price, src };
 }).filter(p => p.name && p.href)
 """
@@ -351,19 +362,22 @@ async def get_alternatives(
         platform = "trendyol"
     display_name = _DISPLAY.get(platform, "Web")
 
-    ptype = extract_product_type(product_name, category)
+    ptype = extract_product_type(product_name, category, brand=brand)
     type_name = ptype["name"]
     queries   = ptype["queries"]
     required  = ptype["required"]
     forbidden = ptype["forbidden"]
 
-    if not queries:
-        cat_base = category.split("/")[0].strip().split("&")[0].strip()
-        if cat_base and cat_base != "Genel":
-            queries = [cat_base]
-        else:
-            print(f"[alt] no queries for {product_name!r}, skipping")
+    if not ptype.get("isSpecific"):
+        print(f"[alt] non-specific type, attempting with relaxed filtering: {product_name!r}")
+        required = []  # don't require specific keywords for unknown product types
+        if not queries:
+            print(f"[alt] no queries available, returning empty for: {product_name!r}")
             return []
+
+    if brand:
+        queries = queries + [f"{brand} {type_name}"]
+    queries = list(dict.fromkeys(q for q in queries if q.strip()))
 
     print(f"[alt] platform={platform!r} type={type_name!r}")
     print(f"[alt] queries={queries}")
@@ -372,6 +386,7 @@ async def get_alternatives(
     target = 5
     accepted: list[dict] = []
     existing_urls: set[str] = set()
+    base_norm = _norm(product_name)
 
     try:
         async with async_playwright() as p:
@@ -402,13 +417,15 @@ async def get_alternatives(
                     name = item.get("name", "")
                     if not url or not name or url in existing_urls:
                         continue
+                    if _norm(name) == base_norm or base_norm in _norm(name):
+                        continue
 
                     has_image = _is_valid_image(item.get("image"))
                     score = _relevance_score(
-                        name, required, forbidden, type_name,
+                        name, product_name, category, required, forbidden, type_name,
                         base_price, item.get("price", ""), has_image,
                     )
-                    if score < 60:
+                    if score < 70:
                         continue
 
                     accepted.append({

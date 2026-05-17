@@ -54,12 +54,22 @@ def get_user_by_id(db: Session, user_id: int) -> User | None:
     return db.query(User).filter(User.id == user_id).first()
 
 
-def create_user(db: Session, name: str, email: str, password: str) -> User:
+def create_user(
+    db: Session,
+    email: str,
+    password: str,
+    first_name: str = "",
+    last_name: str = "",
+    name: str | None = None,
+) -> User:
+    display_name = (name or f"{first_name.strip()} {last_name.strip()}").strip()
     user = User(
-        name=name.strip(),
+        name=display_name,
+        first_name=first_name.strip() or None,
+        last_name=last_name.strip() or None,
         email=email.lower().strip(),
         password_hash=hash_password(password),
-        is_verified=False,
+        is_verified=True,
     )
     db.add(user)
     db.commit()

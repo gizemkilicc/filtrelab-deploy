@@ -125,8 +125,8 @@ def generate_explanations(category: str, scores: dict):
     # ── Append 1-sentence decision context ───────────────────────────────────
     if final_decision == "ALINABİLİR":
         analysis += " Genel skorlar olumlu; güvenle satın alınabilir."
-    elif final_decision == "ÖNERİLMEZ":
-        analysis += f" {fake_explanation}"
+    elif final_decision == "DİKKATLİ İNCELE":
+        analysis += f" {fake_explanation}" if fake_explanation else " Satın almadan önce alternatifleri ve yorumları dikkatlice inceleyin."
     else:
         analysis += " Alternatifleri karşılaştırdıktan sonra karar vermeniz önerilir."
 

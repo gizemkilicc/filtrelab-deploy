@@ -67,8 +67,7 @@ def send_password_reset_email(email: str, token: str) -> None:
     link = f"{FRONTEND_URL}/reset-password?token={token}"
 
     if not _smtp_configured():
-        print(f"[email] DEV MODE — password reset link for {email}:")
-        print(f"[email] {link}")
+        print(f"[RESET LINK] {link}")
         return
 
     html = f"""
@@ -88,4 +87,4 @@ def send_password_reset_email(email: str, token: str) -> None:
     </div>
     """
     if not _send_email(email, "FiltreLAB — Şifre Sıfırlama", html):
-        print(f"[email] SMTP failed — password reset link for {email}: {link}")
+        print(f"[RESET LINK] {link}")

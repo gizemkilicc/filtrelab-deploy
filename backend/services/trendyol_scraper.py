@@ -1,5 +1,7 @@
+import os
 import re
 import json
+import asyncio
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
@@ -13,9 +15,17 @@ TR_MAP = {
     "nemlendirici": "Nemlendirici", "temizleyici": "Temizleyici",
 }
 
-# Image URL patterns that indicate logos/placeholders to reject
 _BAD_IMAGE_PATTERNS = ("logo", "icon", "svg", "placeholder", "default", "blank", "spinner", "badge", "banner", "favicon")
-_GOOD_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+_PAGE_SIZE = 50
+_MAX_REVIEWS = int(os.getenv("MAX_REVIEWS", "1000"))
+
+_ENDPOINT_TEMPLATES = [
+    "https://public.trendyol.com/discovery-web-productgw-service/api/ratings/{pid}?storefrontId=1&culture=tr-TR",
+    "https://public-mdc.trendyol.com/discovery-web-productgw-service/api/ratings/{pid}?storefrontId=1&culture=tr-TR",
+    "https://public-sdc.trendyol.com/discovery-web-productgw-service/api/ratings/{pid}?storefrontId=1&culture=tr-TR",
+    "https://public.trendyol.com/discovery-web-websfxproductreviews-santral/api/product-reviews/{pid}?storefrontId=1&culture=tr-TR",
+]
 
 
 def beautify_turkish(text: str) -> str:
@@ -51,7 +61,6 @@ def _is_valid_image(url: str | None) -> bool:
     url_lower = url.lower()
     if any(bad in url_lower for bad in _BAD_IMAGE_PATTERNS):
         return False
-    # Accept any CDN image (Trendyol uses .jpg/.webp, but check broadly)
     return True
 
 
@@ -63,7 +72,6 @@ def _normalize_image_url(url: str) -> str | None:
         url = "https:" + url
     elif url.startswith("/"):
         url = "https://www.trendyol.com" + url
-    # Extract first URL from srcset (e.g. "img.jpg 1x, img@2x.jpg 2x")
     if " " in url and not url.startswith("http"):
         url = url.split(" ")[0]
     return url if _is_valid_image(url) else None
@@ -97,7 +105,6 @@ def parse_question_count(text: str) -> int | None:
 
 
 async def _extract_image_via_js(page) -> str | None:
-    """Use JavaScript to find the best product image on the page."""
     try:
         result = await page.evaluate("""
             () => {
@@ -106,11 +113,9 @@ async def _extract_image_via_js(page) -> str | None:
                 const isGood = src => src && src.startsWith('http') && !isBad(src);
 
                 function bestSrc(img) {
-                    // Try srcset first (pick highest-res token)
                     const ss = img.getAttribute('srcset') || '';
                     if (ss) {
                         const tokens = ss.split(',').map(s => s.trim().split(/\\s+/)[0]).filter(Boolean);
-                        // last token in srcset is usually highest res
                         for (let i = tokens.length - 1; i >= 0; i--) {
                             let t = tokens[i];
                             if (!t.startsWith('http')) t = 'https:' + t;
@@ -127,7 +132,6 @@ async def _extract_image_via_js(page) -> str | None:
                     return null;
                 }
 
-                // Priority 1: Known Trendyol/CDN product image containers
                 const containers = [
                     '.product-image-container img',
                     '.gallery-container img',
@@ -145,7 +149,6 @@ async def _extract_image_via_js(page) -> str | None:
                     }
                 }
 
-                // Priority 2: Any CDN image (ty-cdn, dsmcdn, trendyol) sorted by natural size
                 const cdnImgs = Array.from(document.querySelectorAll('img'))
                     .map(img => ({ img, src: bestSrc(img) }))
                     .filter(({ src }) => src && (
@@ -156,7 +159,6 @@ async def _extract_image_via_js(page) -> str | None:
 
                 if (cdnImgs.length > 0) return cdnImgs[0].src;
 
-                // Priority 3: Any large http image
                 const allImgs = Array.from(document.querySelectorAll('img'))
                     .map(img => ({ img, src: bestSrc(img) }))
                     .filter(({ src }) => isGood(src))
@@ -175,17 +177,23 @@ async def _extract_image_via_js(page) -> str | None:
 
 
 async def _extract_review_count_via_js(page) -> int | None:
-    """Use JavaScript to find review count on the page."""
     try:
         result = await page.evaluate("""
             () => {
-                // Look for elements containing 'Değerlendirme' or 'Yorum'
-                const allEls = Array.from(document.querySelectorAll('*'));
-                for (const el of allEls) {
-                    if (el.children.length > 0) continue;  // leaf nodes only
-                    const text = (el.textContent || '').trim();
-                    const m = text.match(/^([\d.]+)\s*(Değerlendirme|Yorum)/);
-                    if (m) return m[1].replace(/\./g, '');
+                const containers = Array.from(document.querySelectorAll([
+                    '.rating-line-count',
+                    '.rvw-cnt-tx',
+                    '.reviewCount',
+                    '.ratingCount',
+                    '[class*="rating-line"]',
+                    '[class*="review-count"]',
+                    '[class*="rating-count"]'
+                ].join(',')));
+
+                for (const el of containers) {
+                    const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+                    const m = text.match(/(?:^|\\b)([\\d.]+)\\s*(Değerlendirme|Yorum)(?:\\b|$)/i);
+                    if (m) return m[1].replace(/\\./g, '');
                 }
                 return null;
             }
@@ -198,7 +206,6 @@ async def _extract_review_count_via_js(page) -> int | None:
 
 
 async def _extract_rating_via_js(page) -> float | None:
-    """Use JavaScript to find rating on page."""
     try:
         result = await page.evaluate("""
             () => {
@@ -220,7 +227,6 @@ async def _extract_rating_via_js(page) -> float | None:
 
 
 async def _try_get_attr(el, *attrs) -> str | None:
-    """Try multiple attributes on an element, return first non-empty value."""
     for attr in attrs:
         try:
             val = await el.get_attribute(attr)
@@ -231,10 +237,485 @@ async def _try_get_attr(el, *attrs) -> str | None:
     return None
 
 
-async def scrape_trendyol_product(url: str) -> dict:
+def _extract_product_id(url: str) -> str | None:
+    m = re.search(r"-p-(\d+)", url)
+    return m.group(1) if m else None
+
+
+def _parse_review_body(body: dict) -> tuple[list[dict], dict | None, dict]:
+    """
+    Parse one page of API response.
+    Returns (review_objects, rating_distribution, pagination_meta).
+
+    pagination_meta keys (present only when found in response):
+      totalCount   – total reviews on the platform for this product
+      totalPages   – total number of pages
+      currentPage  – page index returned by the API
+      hasNextPage  – bool hint from the API
+    """
+    result_data = body.get("result") or body
+    comments_raw = (
+        result_data.get("comments")
+        or result_data.get("reviews")
+        or result_data.get("productReviews")
+        or body.get("comments")
+        or []
+    )
+    reviews: list[dict] = []
+    for c in (comments_raw or []):
+        text = (
+            c.get("text") or c.get("content") or
+            c.get("reviewText") or c.get("rvwTxt") or
+            c.get("comment") or ""
+        )
+        if not isinstance(text, str) or len(text.strip()) <= 5:
+            continue
+
+        raw_id = c.get("id") or c.get("reviewId") or c.get("commentId") or ""
+        raw_rating = (
+            c.get("rate") or c.get("rating") or c.get("star") or
+            c.get("starCount") or c.get("ratingScore")
+        )
+        raw_date = (
+            c.get("createdDate") or c.get("date") or c.get("reviewDate") or
+            c.get("userReviewDate") or c.get("lastModifiedDate")
+        )
+        raw_user = (
+            c.get("userFullName") or c.get("userName") or
+            c.get("displayName") or c.get("userDisplayName")
+        )
+
+        reviews.append({
+            "id": str(raw_id) if raw_id else "",
+            "text": text.strip(),
+            "rating": int(raw_rating) if raw_rating is not None else None,
+            "date": str(raw_date) if raw_date else None,
+            "user": str(raw_user) if raw_user else None,
+            "source": "trendyol_reviews_api",
+        })
+
+    dist_raw = (
+        (result_data.get("ratingScore") or {}).get("distribution")
+        or result_data.get("distribution")
+        or {}
+    )
+    rating_dist = (
+        {str(k): int(v) for k, v in dist_raw.items()}
+        if isinstance(dist_raw, dict) and len(dist_raw) >= 2 else None
+    )
+
+    # ── Pagination metadata ───────────────────────────────────────────────────
+    pagination: dict = {}
+    for field in ("totalCount", "total", "totalElements", "totalResults", "commentCount"):
+        val = result_data.get(field)
+        if val is not None:
+            try:
+                pagination["totalCount"] = int(val)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    for field in ("totalPages", "totalPage", "pageCount"):
+        val = result_data.get(field)
+        if val is not None:
+            try:
+                pagination["totalPages"] = int(val)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    for field in ("currentPage", "page", "pageNumber"):
+        val = result_data.get(field)
+        if val is not None:
+            try:
+                pagination["currentPage"] = int(val)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    # hasNextPage: some APIs return explicit boolean, others infer from last=false
+    has_next = result_data.get("hasNextPage") or result_data.get("hasNext")
+    last_page = result_data.get("last")  # Spring-style: last=true means final page
+    if has_next is not None:
+        pagination["hasNextPage"] = bool(has_next)
+    elif last_page is not None:
+        pagination["hasNextPage"] = not bool(last_page)
+
+    return reviews, rating_dist, pagination
+
+
+def _setup_request_capture(page) -> list[str]:
+    captured: list[str] = []
+
+    def _on_request(request) -> None:
+        url = request.url
+        if not any(kw in url for kw in ["rating", "review", "comment", "degerlendirme"]):
+            return
+        if not any(d in url for d in ["trendyol.com", "public.", "public-mdc", "public-sdc"]):
+            return
+        if url not in captured:
+            captured.append(url)
+            print(f"[REVIEWS] intercepted request url={url}")
+
+    page.on("request", _on_request)
+    return captured
+
+
+def _strip_page_params(url: str) -> str:
+    url = re.sub(r"[&?]page=\d+", "", url)
+    url = re.sub(r"[&?]size=\d+", "", url)
+    url = re.sub(r"[&?]pageSize=\d+", "", url)
+    if "?" not in url and "&" in url:
+        url = url.replace("&", "?", 1)
+    return url
+
+
+def _build_page_url(base_url: str, page_num: int, size: int) -> str:
+    sep = "&" if "?" in base_url else "?"
+    return f"{base_url}{sep}page={page_num}&size={size}"
+
+
+async def _refetch_with_status(page, url: str) -> tuple[dict | None, int]:
+    try:
+        result = await page.evaluate(
+            """(endpoint) => fetch(endpoint, {
+                headers: {
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+                }
+            })
+            .then(r => r.json()
+                .then(data => [r.status, data])
+                .catch(() => [r.status, null])
+            )
+            .catch(() => [0, null])""",
+            url,
+        )
+        if result and isinstance(result, list) and len(result) == 2:
+            return result[1], int(result[0] or 0)
+        return None, 0
+    except Exception as e:
+        print(f"[REVIEWS] re-fetch failed url={url[:80]} error={e}")
+        return None, 0
+
+
+async def _fetch_all_pages(
+    page,
+    base_url: str,
+    review_count: int | None,
+    max_reviews: int,
+) -> tuple[list[dict], dict | None, bool, str, int | None]:
+    """
+    Paginate from page=0, collecting review objects until max_reviews or no more data.
+    Returns (reviews, rating_distribution, completed, reason, api_total_count).
+
+    completed=True  → stopped because all reviews were loaded (no more exist)
+    completed=False → stopped early (maxReviews_reached, rate_limited, platform_limit, etc.)
+
+    Reasons:
+      no_more_pages        – API returned empty pages; loaded count matches api total
+      maxReviews_reached   – hit our own MAX_REVIEWS cap
+      rate_limited         – 403/429
+      empty_response       – no body at all
+      duplicate_loop       – API looped/repeated pages (detected via all-duplicate page)
+      platform_limit_reached – API stopped early despite reporting more reviews
+      pagination_incomplete  – API said no more pages but totalCount > loaded
+    """
+    all_reviews: list[dict] = []
+    seen: set[str] = set()
+    rating_dist: dict | None = None
+    reason = "no_more_pages"
+    api_total_count: int | None = None
+    api_total_pages: int | None = None
+
+    target = min(review_count if review_count else max_reviews, max_reviews)
+
+    if review_count:
+        print(f"[REVIEWS] reviewCount={review_count}")
+    print(f"[REVIEWS] maxReviews={max_reviews}")
+
+    # ── Probe for larger page size (100) ────────────────────────────────────
+    actual_page_size = _PAGE_SIZE
+    probe_url_100 = _build_page_url(base_url, 0, 100)
+    probe_body_100, probe_status_100 = await _refetch_with_status(page, probe_url_100)
+    if probe_status_100 == 200 and probe_body_100:
+        probe_reviews_100, _, probe_meta_100 = _parse_review_body(probe_body_100)
+        if len(probe_reviews_100) > _PAGE_SIZE:
+            actual_page_size = 100
+            print(f"[REVIEWS] pageSize=100 supported, switching")
+        if probe_meta_100.get("totalCount") is not None:
+            api_total_count = probe_meta_100["totalCount"]
+        if probe_meta_100.get("totalPages") is not None:
+            api_total_pages = probe_meta_100["totalPages"]
+        if api_total_count:
+            print(f"[REVIEWS] API totalCount={api_total_count} totalPages={api_total_pages}")
+
+    page_num = 0
+    consecutive_empty = 0
+
+    while len(all_reviews) < target:
+        url = _build_page_url(base_url, page_num, actual_page_size)
+        body, status = await _refetch_with_status(page, url)
+
+        if status in (403, 429):
+            print(f"[REVIEWS] page={page_num} status={status} rate_limited — stopping with {len(all_reviews)} reviews")
+            reason = "rate_limited"
+            break
+
+        if not body:
+            print(f"[REVIEWS] page={page_num} status={status or 'no-body'} — stopping")
+            reason = "empty_response"
+            break
+
+        page_reviews, page_dist, page_meta = _parse_review_body(body)
+        loaded_this_page = len(page_reviews)
+
+        # Update pagination metadata from first page that has it
+        if page_meta.get("totalCount") is not None and api_total_count is None:
+            api_total_count = page_meta["totalCount"]
+            api_total_pages = page_meta.get("totalPages")
+            print(f"[REVIEWS] API totalCount={api_total_count} totalPages={api_total_pages}")
+
+        if page_dist and not rating_dist:
+            rating_dist = page_dist
+
+        # Build log line with all available metadata
+        meta_log = f"page={page_num} loaded={loaded_this_page} total={len(all_reviews)}"
+        if page_meta.get("currentPage") is not None:
+            meta_log += f" apiCurrentPage={page_meta['currentPage']}"
+        if page_meta.get("totalPages") is not None:
+            meta_log += f" apiTotalPages={page_meta['totalPages']}"
+        if page_meta.get("totalCount") is not None:
+            meta_log += f" apiTotalCount={page_meta['totalCount']}"
+        if page_meta.get("hasNextPage") is not None:
+            meta_log += f" hasNextPage={page_meta['hasNextPage']}"
+        print(f"[REVIEWS] {meta_log}")
+
+        if not page_reviews:
+            consecutive_empty += 1
+            # Detect platform limit: API says more reviews exist but sent empty page
+            if api_total_count is not None and len(all_reviews) < api_total_count:
+                print(
+                    f"[REVIEWS WARNING] platform limit reached: "
+                    f"apiTotalCount={api_total_count} but got empty page={page_num} "
+                    f"with only {len(all_reviews)} loaded"
+                )
+                reason = "platform_limit_reached"
+                break
+            if consecutive_empty >= 2:
+                reason = "no_more_pages"
+                break
+            page_num += 1
+            continue
+
+        consecutive_empty = 0
+        added = 0
+        for r in page_reviews:
+            dedup_key = r["id"] if r["id"] else r["text"][:80]
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                all_reviews.append(r)
+                added += 1
+
+        if added == 0:
+            # All items were duplicates — API is looping (hidden pagination ceiling)
+            if api_total_count is not None and len(all_reviews) < api_total_count:
+                print(
+                    f"[REVIEWS WARNING] platform limit reached (duplicate loop): "
+                    f"apiTotalCount={api_total_count} but all items on page={page_num} already seen, "
+                    f"loaded={len(all_reviews)}"
+                )
+                reason = "platform_limit_reached"
+            else:
+                reason = "duplicate_loop"
+            break
+
+        if len(all_reviews) >= target:
+            reason = "maxReviews_reached"
+            break
+
+        # hasNextPage=False from API → stop (but check api total first)
+        if page_meta.get("hasNextPage") is False:
+            reason = "no_more_pages"
+            break
+
+        page_num += 1
+        await asyncio.sleep(0.1)
+
+    total = len(all_reviews)
+
+    # ── Final completion assessment ──────────────────────────────────────────
+    # If we stopped with "no_more_pages" but API says totalCount > loaded → incomplete
+    if reason == "no_more_pages" and api_total_count is not None and total < api_total_count:
+        print(
+            f"[REVIEWS WARNING] pagination_incomplete: "
+            f"apiTotalCount={api_total_count} > loaded={total} "
+            f"(platform likely caps accessible pages)"
+        )
+        reason = "pagination_incomplete"
+
+    completed = reason == "no_more_pages"
+
+    print(f"[REVIEWS] totalLoaded={total}")
+    print(f"[REVIEWS] deduped={total}")
+    if api_total_count is not None:
+        print(f"[REVIEWS] apiTotalCount={api_total_count}")
+    print(f"[REVIEWS] completed={completed}")
+    print(f"[REVIEWS] reason={reason}")
+
+    return all_reviews, rating_dist, completed, reason, api_total_count
+
+
+async def _find_working_endpoint(page, product_id: str) -> str | None:
+    for template in _ENDPOINT_TEMPLATES:
+        base_url = template.format(pid=product_id)
+        probe_url = _build_page_url(base_url, 0, _PAGE_SIZE)
+        print(f"[REVIEWS] endpoint tried={probe_url}")
+        body, status = await _refetch_with_status(page, probe_url)
+        if status == 200 and body:
+            reviews, _, meta = _parse_review_body(body)
+            print(f"[REVIEWS] status={status} loaded={len(reviews)} meta={meta}")
+            if reviews:
+                return base_url
+        else:
+            print(f"[REVIEWS] status={status or 'failed'}")
+    return None
+
+
+async def _extract_reviews_trendyol(
+    page,
+    captured_urls: list[str],
+    product_id: str | None,
+    review_count: int | None,
+    max_reviews: int,
+) -> tuple[list[dict], dict | None, str, bool, str, int | None]:
+    """
+    Master review extractor with full pagination.
+    Returns (reviews, rating_distribution, source, completed, reason, api_total_count).
+    """
+    print(f"[REVIEWS] productId={product_id!r} knownReviewCount={review_count}")
+    print(f"[REVIEWS] intercepted {len(captured_urls)} candidate URLs")
+
+    # ── Strategy 1: intercepted URLs → strip page params → paginate ─────────
+    for captured in captured_urls[:5]:
+        base_url = _strip_page_params(captured)
+        probe_url = _build_page_url(base_url, 0, _PAGE_SIZE)
+        body, status = await _refetch_with_status(page, probe_url)
+        if status == 200 and body:
+            probe_reviews, _, _ = _parse_review_body(body)
+            if probe_reviews:
+                print(f"[REVIEWS] using intercepted base_url={base_url[:80]}")
+                reviews, dist, completed, reason, api_total = await _fetch_all_pages(
+                    page, base_url, review_count, max_reviews
+                )
+                if reviews:
+                    source = "intercepted_rate_limited" if reason == "rate_limited" else "intercepted"
+                    return reviews, dist, source, completed, reason, api_total
+
+    # ── Strategy 2: known endpoint templates → paginate ──────────────────────
+    if product_id:
+        base_url = await _find_working_endpoint(page, product_id)
+        if base_url:
+            reviews, dist, completed, reason, api_total = await _fetch_all_pages(
+                page, base_url, review_count, max_reviews
+            )
+            if reviews:
+                source = "api_rate_limited" if reason == "rate_limited" else "trendyol_reviews_api"
+                return reviews, dist, source, completed, reason, api_total
+
+    # ── Strategy 3: DOM fallback (single page, no pagination) ────────────────
+    tab_selectors = [
+        'button:has-text("Değerlendirmeler")',
+        'a:has-text("Değerlendirmeler")',
+        '[class*="review-tab"]',
+        '[class*="ReviewTab"]',
+        'a[href*="degerlendirmeler"]',
+        'a[href*="yorumlar"]',
+        '[data-testid*="review"]',
+        '[class*="tab"]:has-text("Yorum")',
+    ]
+    for sel in tab_selectors:
+        try:
+            el = await page.query_selector(sel)
+            if el:
+                await el.scroll_into_view_if_needed()
+                await el.click()
+                await page.wait_for_timeout(2000)
+                print(f"[REVIEWS] clicked tab sel={sel!r}")
+                break
+        except Exception:
+            continue
+
+    for pct in [0.5, 0.7, 0.85, 1.0]:
+        await page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {pct})")
+        await page.wait_for_timeout(600)
+
+    raw = await page.evaluate("""
+        () => {
+            const sels = [
+                '.pr-rvw-c .rvw-txt', '.pr-rvw-c',
+                '.review-card .description',
+                '[class*="rvw-txt"]', '[class*="reviewText"]',
+                '[class*="review-text"]', '[class*="ReviewContent"]',
+                '[class*="comment-text"]', '[class*="commentText"]',
+                '.productComments p',
+            ];
+            const texts = new Set();
+            for (const sel of sels) {
+                for (const el of document.querySelectorAll(sel)) {
+                    const t = el.children.length === 0
+                        ? (el.textContent || '').trim()
+                        : (el.firstChild?.textContent || '').trim();
+                    if (t.length > 15) texts.add(t);
+                }
+            }
+            return Array.from(texts);
+        }
+    """)
+    dom_texts = [r for r in (raw or []) if isinstance(r, str) and len(r.strip()) > 5]
+    dom_reviews: list[dict] = [
+        {"id": "", "text": t, "rating": None, "date": None, "user": None, "source": "trendyol_dom"}
+        for t in dom_texts
+    ]
+
+    dist_raw = await page.evaluate("""
+        () => {
+            const dist = {};
+            for (const el of document.querySelectorAll(
+                '[class*="rating-bar"],[class*="ratingBar"],[class*="star-count"],[class*="starCount"]'
+            )) {
+                const m = (el.textContent || '').match(/(\\d)\\s*[Yy]ıldız[^\\d]*(\\d+)/);
+                if (m) dist[m[1]] = parseInt(m[2], 10);
+            }
+            if (Object.keys(dist).length < 2) {
+                for (const el of document.querySelectorAll('[aria-label]')) {
+                    const m = (el.getAttribute('aria-label') || '').match(/(\\d)\\s*[Yy]ıldız[^\\d]*(\\d+)/);
+                    if (m) dist[m[1]] = parseInt(m[2], 10);
+                }
+            }
+            return Object.keys(dist).length >= 2 ? dist : null;
+        }
+    """)
+    rating_dist = (
+        {str(k): int(v) for k, v in dist_raw.items()}
+        if isinstance(dist_raw, dict) and len(dist_raw) >= 2 else None
+    )
+
+    print(f"[REVIEWS] loaded={len(dom_reviews)} source=dom")
+    if review_count and review_count > 0 and not dom_reviews:
+        print(f"[REVIEWS ERROR] reviewCount={review_count} exists but no reviews loaded via any strategy")
+
+    if dom_reviews:
+        return dom_reviews, rating_dist, "dom", False, "dom_fallback", None
+    return [], rating_dist, "none", False, "no_reviews_found", None
+
+
+async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> dict:
     parsed_url = urlparse(url)
     domain = parsed_url.netloc.lower()
     path_segments = [seg for seg in parsed_url.path.strip("/").split("/") if seg]
+
+    effective_max_reviews = max_reviews if max_reviews is not None else _MAX_REVIEWS
 
     product_name = None
     brand = None
@@ -246,6 +727,8 @@ async def scrape_trendyol_product(url: str) -> dict:
     seller_score = None
     category = "Genel"
     slug_keywords = []
+    reviews: list[dict] = []
+    rating_distribution: dict | None = None
 
     data_source = {
         "productName": "fallback",
@@ -257,7 +740,6 @@ async def scrape_trendyol_product(url: str) -> dict:
         "sellerScore": "fallback",
     }
 
-    # URL slug as initial fallback (name only, no fake data)
     if "trendyol.com" in domain and len(path_segments) >= 2:
         brand = beautify_turkish(path_segments[0])
         data_source["brand"] = "url_slug"
@@ -266,6 +748,9 @@ async def scrape_trendyol_product(url: str) -> dict:
             slug_part = slug_part.split("-p-")[0]
         slug_keywords = slug_part.split("-")
         product_name = beautify_turkish(slug_part)
+
+    reviews_completed = False
+    reviews_reason = "not_started"
 
     try:
         async with async_playwright() as p:
@@ -298,6 +783,7 @@ async def scrape_trendyol_product(url: str) -> dict:
                 window.chrome = { runtime: {} };
             """)
             page = await context.new_page()
+            captured_urls = _setup_request_capture(page)
 
             try:
                 await page.goto(url, wait_until="networkidle", timeout=45000)
@@ -325,7 +811,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                             if not brand and item.get("brand", {}).get("name"):
                                 brand = item["brand"]["name"].strip()
                                 data_source["brand"] = "jsonld"
-                            # image can be string or list
                             if not image and item.get("image"):
                                 img_raw = item["image"]
                                 candidates = img_raw if isinstance(img_raw, list) else [img_raw]
@@ -391,7 +876,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                 pass
 
             # ── 3. DOM selectors ───────────────────────────────────────────
-            # Product name
             if not product_name or data_source["productName"] == "fallback":
                 for sel in [
                     "h1.pr-new-br",
@@ -417,7 +901,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                     except Exception:
                         continue
 
-            # Price
             if not price or data_source["price"] == "fallback":
                 for sel in [
                     ".prc-dsc",
@@ -439,7 +922,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                     except Exception:
                         continue
 
-            # Image — try many selectors + data attributes
             if not image or data_source["image"] == "fallback":
                 img_selectors = [
                     ".product-image-container img",
@@ -459,7 +941,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                         if el:
                             src = await _try_get_attr(el, "src", "data-src", "data-original", "data-lazy-src")
                             if not src:
-                                # Try srcset — pick first URL
                                 ss = await el.get_attribute("srcset")
                                 if ss:
                                     src = ss.split(",")[0].strip().split(" ")[0]
@@ -471,14 +952,12 @@ async def scrape_trendyol_product(url: str) -> dict:
                     except Exception:
                         continue
 
-            # Image — JavaScript fallback
             if not image or data_source["image"] == "fallback":
                 js_img = await _extract_image_via_js(page)
                 if js_img:
                     image = js_img
                     data_source["image"] = "js"
 
-            # Rating
             if not rating or data_source["rating"] == "fallback":
                 for sel in [".rating-score", ".ratings", '[class*="rating"]', ".ratingScore"]:
                     try:
@@ -499,15 +978,15 @@ async def scrape_trendyol_product(url: str) -> dict:
                     rating = r_js
                     data_source["rating"] = "js"
 
-            # Review count — DOM
             if not review_count or data_source["reviewCount"] == "fallback":
                 for sel in [
-                    'a:has-text("Değerlendirme")',
-                    'span:has-text("Değerlendirme")',
-                    'div:has-text("Değerlendirme")',
-                    'a:has-text("Yorum")',
-                    '[class*="review"] [class*="count"]',
-                    '[class*="rating"] [class*="count"]',
+                    ".rating-line-count",
+                    ".rvw-cnt-tx",
+                    ".reviewCount",
+                    ".ratingCount",
+                    '[class*="rating-line"]',
+                    '[class*="review-count"]',
+                    '[class*="rating-count"]',
                 ]:
                     try:
                         el = await page.query_selector(sel)
@@ -521,19 +1000,17 @@ async def scrape_trendyol_product(url: str) -> dict:
                     except Exception:
                         continue
 
-            # Review count — JavaScript fallback
             if not review_count or data_source["reviewCount"] == "fallback":
                 rc_js = await _extract_review_count_via_js(page)
                 if rc_js is not None:
                     review_count = rc_js
                     data_source["reviewCount"] = "js"
 
-            # Question count
             if not question_count or data_source["questionCount"] == "fallback":
                 for sel in [
-                    'a:has-text("Soru-Cevap")',
-                    'a:has-text("Soru")',
-                    'span:has-text("Soru")',
+                    '[data-testid*="question"]',
+                    '[class*="question-count"]',
+                    '[class*="answered-question"]',
                 ]:
                     try:
                         el = await page.query_selector(sel)
@@ -547,7 +1024,6 @@ async def scrape_trendyol_product(url: str) -> dict:
                     except Exception:
                         continue
 
-            # Seller score
             try:
                 s_el = await page.query_selector(
                     '.seller-store-score, [data-testid="seller-score"]'
@@ -561,7 +1037,9 @@ async def scrape_trendyol_product(url: str) -> dict:
             except Exception:
                 pass
 
-            # Category breadcrumb
+            question_count = None
+            data_source["questionCount"] = "fallback"
+
             try:
                 crumbs = await page.query_selector_all(".breadcrumb-item")
                 if crumbs:
@@ -570,8 +1048,18 @@ async def scrape_trendyol_product(url: str) -> dict:
             except Exception:
                 pass
 
-            # ── 4. Full body regex (last resort) ───────────────────────────
-            needs_body = not price or not rating or not review_count or not question_count or not image
+            # ── 4. Reviews ─────────────────────────────────────────────────
+            product_id = _extract_product_id(url)
+            (
+                reviews, rating_distribution, reviews_source,
+                reviews_completed, reviews_reason, reviews_api_total,
+            ) = await _extract_reviews_trendyol(
+                page, captured_urls, product_id, review_count, effective_max_reviews
+            )
+            data_source["reviews"] = reviews_source
+
+            # ── 5. Full body regex (last resort for product data) ───────────
+            needs_body = not price or not rating or not image
             if needs_body:
                 try:
                     body_text = await page.inner_text("body")
@@ -588,22 +1076,20 @@ async def scrape_trendyol_product(url: str) -> dict:
                             rating = float(m.group(1).replace(",", "."))
                             data_source["rating"] = "regex"
 
-                    if not review_count or data_source["reviewCount"] == "fallback":
-                        rc = parse_review_count(body_text)
-                        if rc is not None:
-                            review_count = rc
-                            data_source["reviewCount"] = "regex"
-
-                    if not question_count or data_source["questionCount"] == "fallback":
-                        qc = parse_question_count(body_text)
-                        if qc is not None:
-                            question_count = qc
-                            data_source["questionCount"] = "regex"
-
                 except Exception:
                     pass
 
-            # Print extraction results for debugging
+            if data_source.get("reviewCount") in {"regex", "body_regex", "fallback"}:
+                if review_count is not None:
+                    print(f"[COUNT SOURCE] rejected reviewCount={review_count} source={data_source.get('reviewCount')}")
+                review_count = None
+                data_source["reviewCount"] = "fallback"
+            if data_source.get("questionCount") in {"regex", "body_regex", "fallback"}:
+                question_count = None
+                data_source["questionCount"] = "fallback"
+
+            print(f"[COUNT SOURCE] reviewCount={review_count} source={data_source.get('reviewCount')}")
+            print(f"[COUNT SOURCE] questionCount={question_count} source={data_source.get('questionCount')}")
             print(
                 f"[scraper] name={product_name!r} brand={brand!r} "
                 f"price={price!r} rating={rating} reviewCount={review_count} "
@@ -614,6 +1100,33 @@ async def scrape_trendyol_product(url: str) -> dict:
 
     except Exception as e:
         print(f"[scraper] Playwright execution error: {e}")
+
+    reviews_loaded = len(reviews)
+
+    # Transparent warning for platform-capped pagination
+    if reviews_reason in ("platform_limit_reached", "pagination_incomplete"):
+        platform_cap = reviews_api_total or review_count
+        print(
+            f"[REVIEWS WARNING] platform limit reached: "
+            f"apiTotalCount={reviews_api_total} reviewCount={review_count} "
+            f"loaded={reviews_loaded} reason={reviews_reason}"
+        )
+
+    review_stats = {
+        "reviewCount": review_count,
+        "reviewsLoaded": reviews_loaded,
+        "dedupedCount": reviews_loaded,
+        "completed": reviews_completed,
+        "maxReviews": effective_max_reviews,
+        "source": data_source.get("reviews", "none"),
+        "reason": reviews_reason,
+    }
+    if reviews_api_total is not None:
+        review_stats["apiTotalCount"] = reviews_api_total
+    if reviews_reason in ("platform_limit_reached", "pagination_incomplete"):
+        review_stats["platformLimitReached"] = True
+    if reviews_loaded == 0 and reviews_reason not in ("no_reviews_found", "not_started"):
+        review_stats["error"] = "reviews_could_not_be_loaded"
 
     return {
         "sourceUrl": url,
@@ -629,4 +1142,9 @@ async def scrape_trendyol_product(url: str) -> dict:
         "sellerScore": seller_score,
         "slugKeywords": slug_keywords,
         "dataSource": data_source,
+        "reviews": reviews,
+        "reviewsLoaded": reviews_loaded,
+        "reviewsSource": data_source.get("reviews", "none"),
+        "ratingDistribution": rating_distribution,
+        "reviewStats": review_stats,
     }
