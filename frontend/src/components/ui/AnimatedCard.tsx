@@ -23,7 +23,7 @@ export function AnimatedCard({ children, className, delay = 0 }: AnimatedCardPro
       transition={{ duration: 0.5, delay, ease: "easeOut" }}
       whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
       className={cn(
-        "glass-card rounded-2xl p-6 relative overflow-hidden group",
+        "glass-card rounded-2xl p-6 relative overflow-hidden group bg-white/75 dark:bg-white/5 border border-white/80 dark:border-white/10 text-[#191847] dark:text-white shadow-[0_18px_50px_rgba(25,24,71,0.08)] dark:shadow-[0_18px_50px_rgba(0,0,0,0.25)] backdrop-blur-xl",
         className
       )}
     >

@@ -3,14 +3,22 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { runAIAnalysis, type AIAnalysisResult } from "@/lib/apiClient";
-import { ScanTimeline } from "@/components/ui/ScanTimeline";
+import {
+  runAIAnalysis,
+  addFavorite,
+  addPriceTracking,
+  addAnalysisHistory,
+  type AIAnalysisResult,
+} from "@/lib/apiClient";
 import { AnimatedCard } from "@/components/ui/AnimatedCard";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { FinalVerdict } from "@/components/ui/FinalVerdict";
-import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles } from "lucide-react";
+import { ScanTimeline } from "@/components/ui/ScanTimeline";
+import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Bell, Heart } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
+
+const LAST_ANALYSIS_KEY = "filtre_last_analysis";
 
 function isValidImageUrl(url: unknown): url is string {
   return (
@@ -20,6 +28,23 @@ function isValidImageUrl(url: unknown): url is string {
   );
 }
 
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function formatPercent(value: unknown): string {
+  return isNumber(value) ? `%${Math.round(value as number)}` : "—";
+}
+
+function formatScore(value: unknown, max: number): string {
+  return isNumber(value) ? `${value}/${max}` : "—";
+}
+
+function progressValue(value: unknown): number {
+  if (!isNumber(value)) return 0;
+  return Math.max(0, Math.min(100, value as number));
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const url = searchParams.get("url") || "";
@@ -27,17 +52,16 @@ function DashboardContent() {
   const [isScanning, setIsScanning] = useState(true);
   const [result, setResult] = useState<AIAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+  const [featureMessage, setFeatureMessage] = useState<string | null>(null);
   type StepStatus = "pending" | "scanning" | "completed";
-  const [timelineSteps, setTimelineSteps] = useState<{id: number, message: string, status: StepStatus}[]>([
-    { id: 1, message: "Ürün linki inceleniyor...", status: "pending" },
-    { id: 2, message: "Yorumlar analiz ediliyor...", status: "pending" },
-    { id: 3, message: "Sahte yorum kalıpları aranıyor...", status: "pending" },
-    { id: 4, message: "İade riski hesaplanıyor...", status: "pending" },
-    { id: 5, message: "Alternatif ürünler karşılaştırılıyor...", status: "pending" },
-    { id: 6, message: "Nihai karar oluşturuluyor...", status: "pending" }
+  const [timelineSteps, setTimelineSteps] = useState<{ id: number; message: string; status: StepStatus }[]>([
+    { id: 1, message: "Link alındı", status: "pending" },
+    { id: 2, message: "Yorumlar analiz ediliyor", status: "pending" },
+    { id: 3, message: "Sahte yorum kontrolü", status: "pending" },
+    { id: 4, message: "Fiyat karşılaştırması", status: "pending" },
+    { id: 5, message: "AI karar oluşturuyor", status: "pending" },
   ]);
-
+  
   useEffect(() => {
     let mounted = true;
     
@@ -45,16 +69,27 @@ function DashboardContent() {
       try {
         const response = await runAIAnalysis(url, (stepIndex) => {
           if (!mounted) return;
-          setTimelineSteps(prev => prev.map((step, idx) => {
+          setTimelineSteps((prev) => prev.map((step, idx) => {
             if (idx < stepIndex) return { ...step, status: "completed" };
             if (idx === stepIndex) return { ...step, status: "scanning" };
-            return step;
+            return { ...step, status: "pending" };
           }));
         });
         
         if (mounted) {
           if (response.success) {
             setResult(response.data);
+            if (typeof window !== "undefined") {
+              localStorage.setItem(LAST_ANALYSIS_KEY, JSON.stringify(response.data));
+            }
+            addAnalysisHistory({
+              productName: response.data.productName,
+              productUrl: response.data.sourceUrl || url,
+              image: response.data.image ?? null,
+              price: response.data.price ?? null,
+              finalDecision: response.data.finalDecision ?? null,
+              trustScore: response.data.trustScore ?? null,
+            }).catch(() => undefined);
           } else {
             setError(response.error);
           }
@@ -76,16 +111,20 @@ function DashboardContent() {
 
   if (isScanning) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8">
+      <div className="min-h-screen flex flex-col items-center justify-center p-8 relative overflow-hidden">
+        <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
+          <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] bg-[var(--neon-purple)] opacity-10 blur-[150px] rounded-full" />
+          <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[50%] bg-[var(--neon-blue)] opacity-10 blur-[150px] rounded-full" />
+        </div>
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-[var(--bg-card)] border border-white/10 rounded-3xl p-12 w-full max-w-2xl shadow-2xl backdrop-blur-xl"
+          className="relative z-10 bg-white/80 dark:bg-[var(--bg-card)] border border-white/70 dark:border-white/10 rounded-3xl p-12 w-full max-w-2xl shadow-[0_20px_80px_rgba(25,24,71,0.10)] dark:shadow-[0_0_60px_rgba(0,212,255,0.08)] backdrop-blur-xl"
         >
           <div className="text-center mb-12">
             <BrainCircuit className="w-16 h-16 text-[var(--neon-blue)] mx-auto mb-6 animate-pulse" />
             <h2 className="text-3xl font-bold mb-2">FiltreLAB Analiz Motoru Devrede</h2>
-            <p className="text-gray-400">Bu ürün için binlerce veri noktası analiz ediliyor...</p>
+            <p className="text-gray-700 dark:text-gray-300">Bu ürün için binlerce veri noktası analiz ediliyor...</p>
           </div>
           <ScanTimeline steps={timelineSteps} />
         </motion.div>
@@ -106,9 +145,9 @@ function DashboardContent() {
         >
           <ShieldAlert className="w-20 h-20 text-[var(--neon-pink)] mx-auto mb-6" />
           <h2 className="text-3xl font-bold mb-4">Analiz Başarısız</h2>
-          <p className="text-gray-300 mb-8 leading-relaxed">{error}</p>
+          <p className="text-gray-700 dark:text-gray-300 mb-8 leading-relaxed">{error}</p>
           <Link href="/">
-            <button className="bg-white/5 hover:bg-white/10 text-white border border-white/20 px-8 py-3 rounded-full font-bold transition-all">
+            <button className="bg-[#191847] hover:bg-[#242266] dark:bg-white/5 dark:hover:bg-white/10 text-white border border-[#191847]/20 dark:border-white/20 px-8 py-3 rounded-full font-bold transition-all">
               Yeni Arama Yap
             </button>
           </Link>
@@ -119,6 +158,40 @@ function DashboardContent() {
 
   if (!result) return null;
 
+  const handleAddPriceTracking = async () => {
+    if (!result) return;
+    const res = await addPriceTracking({
+      productName: result.productName,
+      productUrl: result.sourceUrl || url,
+      currentPrice: result.price || "0 TL",
+      image: result.image ?? null,
+      platform: result.sourcePlatform ?? null,
+    });
+    if (res.success) {
+      setFeatureMessage("Fiyat takibine eklendi!");
+    } else {
+      setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "Giriş yapmalısınız.");
+    }
+    setTimeout(() => setFeatureMessage(null), 3000);
+  };
+
+  const handleAddFavorite = async () => {
+    if (!result) return;
+    const res = await addFavorite({
+      productName: result.productName,
+      productUrl: result.sourceUrl || url,
+      image: result.image ?? null,
+      price: result.price ?? null,
+      platform: result.sourcePlatform ?? null,
+    });
+    if (res.success) {
+      setFeatureMessage("Favorilere eklendi!");
+    } else {
+      setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "Giriş yapmalısınız.");
+    }
+    setTimeout(() => setFeatureMessage(null), 3000);
+  };
+
   return (
     <div className="min-h-screen p-6 md:p-12 relative">
       {/* Abstract Background */}
@@ -128,7 +201,7 @@ function DashboardContent() {
       </div>
 
       <div className="max-w-7xl mx-auto relative z-10">
-        <Link href="/" className="inline-flex items-center text-gray-400 hover:text-white transition-colors mb-8">
+        <Link href="/" className="inline-flex items-center text-gray-500 hover:text-[#191847] dark:text-gray-400 dark:hover:text-white transition-colors mb-8">
           <ArrowLeft className="w-5 h-5 mr-2" />
           Aramaya Dön
         </Link>
@@ -149,45 +222,69 @@ function DashboardContent() {
                   />
                 </div>
               ) : (
-                <div className="flex h-80 w-full items-center justify-center bg-neutral-900 text-neutral-500 text-sm rounded-t-3xl">
+                <div className="flex h-80 w-full items-center justify-center bg-gray-100 dark:bg-neutral-900 text-gray-500 dark:text-neutral-500 text-sm rounded-t-3xl">
                   Görsel bulunamadı
                 </div>
               )}
               <div className="p-6">
                 <div className="flex flex-col gap-1 mb-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">{result.category}</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{result.category}</span>
                   <span className="text-sm font-semibold text-[var(--neon-purple)]">{result.brand}</span>
                 </div>
                 <h2 className="text-2xl font-bold mb-3 leading-tight">{result.productName}</h2>
                 <div className="text-3xl font-black text-[var(--neon-blue)] neon-text-blue mb-4">{result.price}</div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <button
+                    onClick={handleAddPriceTracking}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--neon-blue)]/30 bg-[var(--neon-blue)]/10 px-4 py-3 text-sm font-bold text-[var(--neon-blue)] hover:bg-[var(--neon-blue)]/15 transition-colors"
+                  >
+                    <Bell className="h-4 w-4" />
+                    Fiyat Takibine Ekle
+                  </button>
+                  <button
+                    onClick={handleAddFavorite}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--neon-pink)]/30 bg-[var(--neon-pink)]/10 px-4 py-3 text-sm font-bold text-[var(--neon-pink)] hover:bg-[var(--neon-pink)]/15 transition-colors"
+                  >
+                    <Heart className="h-4 w-4" />
+                    Favorilere Ekle
+                  </button>
+                </div>
+
+                {featureMessage && (
+                  <p className="mb-4 rounded-2xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    {featureMessage}
+                  </p>
+                )}
                 
-                <div className="flex items-center gap-4 pt-4 border-t border-white/10 text-sm">
+                <div className="flex items-center gap-4 pt-4 border-t border-black/10 dark:border-white/10 text-sm">
                   <div className="flex flex-col gap-1">
-                    <span className="text-sm text-white/50">İade Riski</span>
-                    <span className={`font-bold ${result.returnRisk === "Yüksek" ? "text-red-400" : result.returnRisk === "Orta" ? "text-yellow-400" : "text-green-400"}`}>
+                    <span className="text-sm text-gray-500 dark:text-gray-400">İade Riski</span>
+                    <span className={`font-bold ${result.returnRisk === "Yüksek" ? "text-red-600 dark:text-red-400" : result.returnRisk === "Orta" ? "text-yellow-700 dark:text-yellow-400" : "text-green-700 dark:text-green-400"}`}>
                       {result.returnRisk}
                     </span>
                   </div>
-                  <div className="text-white/50 border-l border-white/10 pl-4">
-                    {result.reviewCount > 0
+                  <div className="text-gray-500 dark:text-gray-400 border-l border-black/10 dark:border-white/10 pl-4">
+                    {isNumber(result.reviewCount) && result.reviewCount > 0
                       ? <span>{result.reviewCount.toLocaleString("tr-TR")} Değerlendirme</span>
-                      : <span className="text-white/30">Değerlendirme verisi yok</span>
+                      : <span className="text-gray-500 dark:text-gray-400">Değerlendirme verisi yok</span>
                     }
                   </div>
-                  {result.questionCount && result.questionCount > 0 && (
-                    <div className="text-white/50 border-l border-white/10 pl-4">
-                      <span>{result.questionCount.toLocaleString("tr-TR")} Soru</span>
-                    </div>
-                  )}
+                  <div className="text-gray-500 dark:text-gray-400 border-l border-black/10 dark:border-white/10 pl-4">
+                    {result.questionCount === null || result.questionCount === undefined
+                      ? <span>Soru: Veri yok</span>
+                      : <span>{result.questionCount.toLocaleString("tr-TR")} Soru</span>
+                    }
+                  </div>
                 </div>
               </div>
             </AnimatedCard>
 
-            <AnimatedCard delay={0.2} className="bg-gradient-to-br from-gray-900 to-black border-[var(--neon-blue)]/20">
+            <AnimatedCard delay={0.2} className="bg-gradient-to-br from-white to-blue-50/80 dark:from-gray-900 dark:to-black border-[var(--neon-blue)]/20">
               <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="text-yellow-400" /> Alışveriş Psikolojisi Analizi
               </h3>
-              <p className="text-sm text-white/70 leading-relaxed">
+              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
                 {result.shoppingBehavior}
               </p>
             </AnimatedCard>
@@ -204,11 +301,11 @@ function DashboardContent() {
                   <h3 className="text-lg font-bold">Sahte Yorum Riski</h3>
                 </div>
                 <div className="flex items-end mb-4">
-                  <span className="text-5xl font-black">%{result.fakeReviewRisk}</span>
-                  <span className="text-gray-400 ml-2 mb-1">risk skoru</span>
+                  <span className="text-5xl font-black">{`%${result.fakeReviewRisk}`}</span>
+                  <span className="text-gray-500 dark:text-gray-400 ml-2 mb-1">risk skoru</span>
                 </div>
-                <ProgressBar label="Fiyat Performansı" value={result.pricePerformance * 10} color="var(--neon-green)" />
-                <ProgressBar label="Sahte Yorum Riski" value={result.fakeReviewRisk} color="var(--neon-pink)" />
+                <ProgressBar label="Fiyat Performansı" value={progressValue(result.pricePerformance)} color="var(--neon-green)" />
+                <ProgressBar label="Sahte Yorum Riski" value={progressValue(result.fakeReviewRisk)} color="var(--neon-pink)" />
               </AnimatedCard>
 
               <AnimatedCard delay={0.4}>
@@ -227,25 +324,30 @@ function DashboardContent() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <AnimatedCard delay={0.5} className="flex flex-col items-center justify-center text-center p-4">
                 <Star className="w-8 h-8 text-yellow-500 mb-2" />
-                <div className="text-3xl font-bold">{result.trustScore}/100</div>
-                <div className="text-xs text-gray-400 uppercase tracking-wider">Güven Skoru</div>
+                <div className="text-3xl font-bold">{formatScore(result.trustScore, 100)}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-1">Güven Skoru</div>
               </AnimatedCard>
-              
+
               <AnimatedCard delay={0.6} className="flex flex-col items-center justify-center text-center p-4">
                 <TrendingUp className="w-8 h-8 text-[var(--neon-green)] mb-2" />
-                <div className="text-3xl font-bold">{result.sentimentScore}/10</div>
-                <div className="text-xs text-gray-400 uppercase tracking-wider">Yorum Duygu Skoru</div>
+                <div className="text-3xl font-bold">{formatPercent(result.sentimentScore)}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-1">Yorum Duygu Skoru</div>
               </AnimatedCard>
 
               <AnimatedCard delay={0.7} className="flex flex-col items-center justify-center text-center p-4">
                 <Zap className="w-8 h-8 text-[var(--neon-blue)] mb-2" />
-                <div className="text-3xl font-bold">{result.pricePerformance}/10</div>
-                <div className="text-xs text-gray-400 uppercase tracking-wider">Fiyat / Performans</div>
+                <div className="text-3xl font-bold">{formatScore(result.pricePerformance, 100)}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-1">Fiyat / Performans</div>
               </AnimatedCard>
             </div>
 
             {/* Final Verdict */}
-            <FinalVerdict decision={result.finalDecision} reason={result.analysis || ""} />
+            <FinalVerdict
+              decision={result.finalDecision}
+              reason={result.analysis || ""}
+              confidenceLevel={result.confidenceLevel}
+              dataWarning={result.dataWarning}
+            />
 
             {/* Alternatives */}
             <motion.div
@@ -258,7 +360,7 @@ function DashboardContent() {
               <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <BrainCircuit className="text-[var(--neon-blue)]" /> Yapay Zeka Kararı
               </h3>
-              <p className="text-white/80 leading-relaxed mb-6">
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
                 {result.analysis}
               </p>
               
@@ -277,12 +379,12 @@ function DashboardContent() {
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        <AnimatedCard className="flex items-center p-4 gap-4 bg-white/5 border-white/10 group-hover:bg-white/10 group-hover:border-[var(--neon-blue)]/30 transition-all cursor-pointer">
+                        <AnimatedCard className="flex items-center p-4 gap-4 bg-white/75 dark:bg-white/5 border-black/10 dark:border-white/10 group-hover:bg-white dark:group-hover:bg-white/10 group-hover:border-[var(--neon-blue)]/30 transition-all cursor-pointer">
                           <div className="relative w-24 h-24 rounded-lg overflow-hidden flex-shrink-0 bg-white">
                             {isValidImageUrl(alt.image) ? (
                               <Image src={alt.image} alt={alt.name || "Ürün görseli"} fill className="object-contain p-1" sizes="96px" />
                             ) : (
-                              <div className="flex h-full w-full items-center justify-center bg-neutral-800 text-neutral-500 text-xs text-center p-1 leading-tight">
+                              <div className="flex h-full w-full items-center justify-center bg-gray-100 dark:bg-neutral-800 text-gray-500 dark:text-neutral-500 text-xs text-center p-1 leading-tight">
                                 Görsel Yok
                               </div>
                             )}
@@ -290,14 +392,14 @@ function DashboardContent() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1">
                               {alt.platform && (
-                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60 border border-white/10">
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300 border border-black/10 dark:border-white/10">
                                   {alt.platform}
                                 </span>
                               )}
                             </div>
                             <h4 className="font-bold text-base group-hover:text-[var(--neon-blue)] transition-colors">{alt.name}</h4>
                             <p className="text-lg text-[var(--neon-blue)] font-black mt-1">{alt.price}</p>
-                            <p className="text-sm text-white/60 mt-1 leading-relaxed">{alt.reason}</p>
+                            <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 leading-relaxed">{alt.reason}</p>
                           </div>
                           <div className="hidden sm:flex px-4 py-2 rounded-lg bg-[var(--neon-blue)]/10 text-[var(--neon-blue)] text-sm font-bold border border-[var(--neon-blue)]/20 whitespace-nowrap">
                             Ürüne Git
@@ -309,7 +411,7 @@ function DashboardContent() {
                 </>
               ) : (
                 <AnimatedCard className="text-center p-8 border-dashed border-white/20 bg-transparent">
-                  <p className="text-gray-400">Bu ürün için doğrulanmış alternatif bulunamadı.</p>
+                  <p className="text-gray-500 dark:text-gray-400">Doğrulanmış alternatif ürün bulunamadı.</p>
                 </AnimatedCard>
               )}
             </motion.div>
@@ -323,7 +425,7 @@ function DashboardContent() {
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-white">Yükleniyor...</div>}>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-[#191847] dark:text-white">Yükleniyor...</div>}>
       <DashboardContent />
     </Suspense>
   );

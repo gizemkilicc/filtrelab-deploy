@@ -7,6 +7,9 @@
   --foreground: #1e1b4b;
   --neon-blue: #60a5fa;
   --neon-purple: #c084fc;
+  --neon-pink: #f472b6;
+  --neon-green: #4ade80;
+  --bg-card: rgba(255, 255, 255, 0.92);
   --glass-bg-start: rgba(255, 255, 255, 0.8);
   --glass-bg-end: rgba(255, 255, 255, 0.3);
   --glass-border: rgba(255, 255, 255, 0.9);
@@ -17,6 +20,11 @@
 .dark {
   --background: #09060f;
   --foreground: #f0eeff;
+  --neon-blue: #60a5fa;
+  --neon-purple: #c084fc;
+  --neon-pink: #f472b6;
+  --neon-green: #4ade80;
+  --bg-card: rgba(15, 10, 30, 0.88);
   --glass-bg-start: rgba(255, 255, 255, 0.07);
   --glass-bg-end: rgba(255, 255, 255, 0.02);
   --glass-border: rgba(255, 255, 255, 0.1);

@@ -20,7 +20,7 @@ export function ScanTimeline({ steps }: ScanTimelineProps) {
         <div key={step.id} className="flex items-center space-x-4 relative">
           {/* Vertical line connector */}
           {index < steps.length - 1 && (
-            <div className="absolute left-3 top-8 bottom-[-24px] w-0.5 bg-gray-800" />
+            <div className="absolute left-3 top-8 bottom-[-24px] w-0.5 bg-gray-300 dark:bg-gray-800" />
           )}
 
           <div className="flex-shrink-0 relative z-10 bg-[var(--background)]">
@@ -40,7 +40,7 @@ export function ScanTimeline({ steps }: ScanTimelineProps) {
                 <Loader2 className="w-6 h-6 text-[var(--neon-blue)] drop-shadow-[0_0_8px_rgba(0,240,255,0.8)]" />
               </motion.div>
             ) : (
-              <Circle className="w-6 h-6 text-gray-700" />
+              <Circle className="w-6 h-6 text-gray-400 dark:text-gray-700" />
             )}
           </div>
 
@@ -52,8 +52,8 @@ export function ScanTimeline({ steps }: ScanTimelineProps) {
             }}
             transition={{ duration: 0.3 }}
             className={`text-lg ${
-              step.status === "scanning" ? "text-white font-medium" : 
-              step.status === "completed" ? "text-gray-300" : "text-gray-500"
+              step.status === "scanning" ? "text-[#191847] dark:text-white font-medium" : 
+              step.status === "completed" ? "text-gray-700 dark:text-gray-300" : "text-gray-500 dark:text-gray-400"
             }`}
           >
             {step.message}

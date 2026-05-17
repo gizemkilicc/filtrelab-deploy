@@ -1,28 +1,46 @@
 export type AIAnalysisResult = {
-  extractedFromUrl: boolean;
+  extractedFromUrl?: boolean;
   sourceUrl: string;
   sourcePlatform: string;
   dataSource: Record<string, string>;
-  confidence: number;
-  extractedFields: Record<string, boolean>;
+  dataQuality?: {
+    reviewsLoaded?: number;
+    hasRatingDistribution?: boolean;
+    alternativePricesFound?: number;
+    hasRating?: boolean;
+    hasReviewCount?: boolean;
+    hasSellerScore?: boolean;
+    sentimentEligible?: boolean;
+    fakeRiskEligible?: boolean;
+    pricePerformanceEligible?: boolean;
+    price?: "high" | "medium" | "low" | "missing";
+    reviewCount?: "high" | "medium" | "low" | "missing";
+    questionCount?: "high" | "medium" | "low" | "missing";
+  };
+  scoringInputs?: Record<string, unknown>;
+  scoringVersion?: string;
+  confidence?: number;
+  extractedFields?: Record<string, boolean>;
   productName: string;
   brand: string;
   category: string;
   categoryConfidence?: number;
-  price: string;
+  price: string | null;
   image?: string | null;
   rating: number;
-  reviewCount: number;
+  reviewCount: number | null;
   questionCount?: number | null;
   sellerScore?: number | null;
   fakeReviewRisk: number;
   trustScore: number;
   returnRisk: "Düşük" | "Orta" | "Yüksek";
   sentimentScore: number;
-  pricePerformance: number;
+  pricePerformance: number | null;
+  confidenceLevel: "HIGH_CONFIDENCE" | "MEDIUM_CONFIDENCE" | "LOW_CONFIDENCE";
+  dataWarning: string | null;
   analysis: string;
   shoppingBehavior: string;
-  finalDecision: "ALINABİLİR" | "BEKLE" | "ÖNERİLMEZ";
+  finalDecision: "ALINABİLİR" | "DİKKATLİ İNCELE" | "BEKLE";
   betterAlternatives: {
     name: string;
     price: string;
@@ -31,6 +49,14 @@ export type AIAnalysisResult = {
     url?: string;
     platform?: string;
     isDirectProductUrl?: boolean;
+  }[];
+  alternativeProducts?: {
+    name: string;
+    price: string;
+    image?: string | null;
+    reason?: string;
+    url?: string;
+    platform?: string;
   }[];
 };
 
@@ -42,14 +68,16 @@ export type APIResponse =
 
 export type AuthUser = {
   id: number;
+  firstName: string;
+  lastName: string;
   name: string;
   email: string;
-  isVerified: boolean;
   createdAt?: string;
+  analysisCount?: number;
 };
 
 export type AuthResponse =
-  | { success: true; accessToken: string; user: AuthUser; emailVerified: boolean; message: string | null }
+  | { success: true; accessToken: string; user: AuthUser; message: string | null }
   | { success: false; error: string };
 
 export type SimpleAuthResponse =
@@ -58,7 +86,32 @@ export type SimpleAuthResponse =
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type SavedProduct = {
+  id: number;
+  productName: string;
+  productUrl: string;
+  image?: string | null;
+  price?: string | null;
+  currentPrice?: string | null;
+  targetPrice?: string | null;
+  finalDecision?: string | null;
+  trustScore?: number | null;
+  platform?: string | null;
+  createdAt?: string | null;
+};
+
+export type Recommendation = {
+  title: string;
+  description: string;
+  source?: SavedProduct | null;
+};
 
 // ── Analyze ───────────────────────────────────────────────────────────────────
 
@@ -129,17 +182,55 @@ async function authPost<T>(path: string, body: Record<string, string>): Promise<
   return json as T;
 }
 
+function getToken(): string | null {
+  return typeof window !== "undefined" ? localStorage.getItem("filtre_token") : null;
+}
+
+function getAuthHeaders(): HeadersInit {
+  const token = getToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function featureRequest<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<{ success: true; data: T } | { success: false; error: string }> {
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        ...getAuthHeaders(),
+        ...(options.headers || {}),
+      },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        success: false,
+        error: json.detail || json.error || "İşlem başarısız.",
+      };
+    }
+    return { success: true, data: json as T };
+  } catch {
+    return { success: false, error: "Backend bağlantısı kurulamadı." };
+  }
+}
+
 // ── Auth functions ────────────────────────────────────────────────────────────
 
 export async function registerUser(
-  name: string,
+  firstName: string,
+  lastName: string,
   email: string,
   password: string
 ): Promise<SimpleAuthResponse> {
   try {
     const data = await authPost<{ success: boolean; message: string; userId?: number }>(
       "/auth/register",
-      { name, email, password }
+      { firstName, lastName, email, password }
     );
     return { success: true, message: data.message, userId: data.userId };
   } catch (err) {
@@ -156,20 +247,19 @@ export async function loginUser(
       success: boolean;
       accessToken: string;
       user: AuthUser;
-      emailVerified: boolean;
       message: string | null;
     }>("/auth/login", { email, password });
 
     if (typeof window !== "undefined") {
       localStorage.setItem("filtre_token", data.accessToken);
       localStorage.setItem("filtre_user", JSON.stringify(data.user));
+      window.dispatchEvent(new CustomEvent("filtre-auth-changed"));
     }
 
     return {
       success: true,
       accessToken: data.accessToken,
       user: data.user,
-      emailVerified: data.emailVerified,
       message: data.message,
     };
   } catch (err) {
@@ -227,5 +317,109 @@ export function logoutUser(): void {
   if (typeof window !== "undefined") {
     localStorage.removeItem("filtre_token");
     localStorage.removeItem("filtre_user");
+    window.dispatchEvent(new CustomEvent("filtre-auth-changed"));
   }
+}
+
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
+export async function chatWithAssistant(
+  message: string,
+  analysis: AIAnalysisResult | null,
+  history: ChatMessage[]
+): Promise<{ success: true; reply: string; intent?: string; preferences?: Record<string, boolean> } | { success: false; error: string }> {
+  try {
+    const res = await fetch(`${API_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        analysis,
+        history: history.slice(-12),
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.success === false) {
+      return { success: false, error: json.detail || json.error || "Yanıt oluşturulamadı." };
+    }
+    return {
+      success: true,
+      reply: json.reply || "Şu anda yanıt oluşturamadım, tekrar dener misin?",
+      intent: json.intent,
+      preferences: json.preferences,
+    };
+  } catch {
+    return { success: false, error: "Şu anda yanıt oluşturamadım, tekrar dener misin?" };
+  }
+}
+
+// ── User features ────────────────────────────────────────────────────────────
+
+export async function addPriceTracking(item: {
+  productName: string;
+  productUrl: string;
+  currentPrice: string;
+  targetPrice?: string;
+  image?: string | null;
+  platform?: string | null;
+}) {
+  return featureRequest<{ success: boolean; item: SavedProduct }>("/price-tracking", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+}
+
+export async function getPriceTracking() {
+  return featureRequest<{ success: boolean; items: SavedProduct[] }>("/price-tracking");
+}
+
+export async function deletePriceTracking(id: number) {
+  return featureRequest<{ success: boolean }>(`/price-tracking/${id}`, { method: "DELETE" });
+}
+
+export async function addAnalysisHistory(item: {
+  productName: string;
+  productUrl: string;
+  image?: string | null;
+  price?: string | null;
+  finalDecision?: string | null;
+  trustScore?: number | null;
+}) {
+  return featureRequest<{ success: boolean; item: SavedProduct }>("/analysis-history", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+}
+
+export async function getAnalysisHistory() {
+  return featureRequest<{ success: boolean; items: SavedProduct[] }>("/analysis-history");
+}
+
+export async function deleteAnalysisHistory(id: number) {
+  return featureRequest<{ success: boolean }>(`/analysis-history/${id}`, { method: "DELETE" });
+}
+
+export async function addFavorite(item: {
+  productName: string;
+  productUrl: string;
+  image?: string | null;
+  price?: string | null;
+  platform?: string | null;
+}) {
+  return featureRequest<{ success: boolean; item: SavedProduct }>("/favorites", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+}
+
+export async function getFavorites() {
+  return featureRequest<{ success: boolean; items: SavedProduct[] }>("/favorites");
+}
+
+export async function deleteFavorite(id: number) {
+  return featureRequest<{ success: boolean }>(`/favorites/${id}`, { method: "DELETE" });
+}
+
+export async function getRecommendations() {
+  return featureRequest<{ success: boolean; message: string | null; recommendations: Recommendation[] }>("/recommendations");
 }

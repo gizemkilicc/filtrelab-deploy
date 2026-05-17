@@ -15,10 +15,11 @@ type Mode = "login" | "register" | "forgot";
 
 export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [mode, setMode] = useState<Mode>("login");
-  const [mounted, setMounted] = useState(false);
+  const [mounted] = useState(() => typeof document !== "undefined");
 
   // Form fields
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -27,17 +28,17 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   // Reset state when modal opens or mode changes
   useEffect(() => {
-    setError(null);
-    setSuccessMsg(null);
-    setName("");
-    setEmail("");
-    setPassword("");
+    const timer = window.setTimeout(() => {
+      setError(null);
+      setSuccessMsg(null);
+      setFirstName("");
+      setLastName("");
+      setEmail("");
+      setPassword("");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [mode, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,7 +49,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
     try {
       if (mode === "register") {
-        const res = await registerUser(name, email, password);
+        const res = await registerUser(firstName, lastName, email, password);
         if (res.success) {
           setSuccessMsg(res.message);
         } else {
@@ -58,7 +59,6 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
         const res = await loginUser(email, password);
         if (res.success) {
           if (res.message) {
-            // Email not verified — still let them in but warn
             setSuccessMsg(`Giriş başarılı! ${res.message}`);
             setTimeout(() => onClose(), 2000);
           } else {
@@ -156,17 +156,34 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
             <form className="space-y-4 relative z-10" onSubmit={handleSubmit}>
               {mode === "register" && (
                 <div>
-                  <label className="block text-[11px] font-semibold text-gray-500 mb-1.5 ml-1 tracking-widest uppercase">
-                    Ad Soyad
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Jane Doe"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    className="w-full bg-white/60 border border-white rounded-xl px-4 py-3.5 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-white focus:bg-white transition-all shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)] font-light text-[15px]"
-                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 mb-1.5 ml-1 tracking-widest uppercase">
+                        Ad
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Jane"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        required
+                        className="w-full bg-white/60 border border-white rounded-xl px-4 py-3.5 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-white focus:bg-white transition-all shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)] font-light text-[15px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 mb-1.5 ml-1 tracking-widest uppercase">
+                        Soyad
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Doe"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        required
+                        className="w-full bg-white/60 border border-white rounded-xl px-4 py-3.5 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-white focus:bg-white transition-all shadow-[inset_0_1px_3px_rgba(0,0,0,0.02)] font-light text-[15px]"
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 

@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Bell, History, Heart, Bot, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { AuthModal } from "./AuthModal";
+import Link from "next/link";
 
 const features = [
   {
@@ -13,6 +14,7 @@ const features = [
     color: "text-cyan-500 dark:text-cyan-400",
     bg: "bg-cyan-500/10",
     border: "border-cyan-500/15",
+    href: "/price-tracking",
   },
   {
     icon: History,
@@ -21,6 +23,7 @@ const features = [
     color: "text-purple-500 dark:text-purple-400",
     bg: "bg-purple-500/10",
     border: "border-purple-500/15",
+    href: "/history",
   },
   {
     icon: Heart,
@@ -29,6 +32,7 @@ const features = [
     color: "text-fuchsia-500 dark:text-fuchsia-400",
     bg: "bg-fuchsia-500/10",
     border: "border-fuchsia-500/15",
+    href: "/favorites",
   },
   {
     icon: Bot,
@@ -37,6 +41,7 @@ const features = [
     color: "text-emerald-500 dark:text-emerald-400",
     bg: "bg-emerald-500/10",
     border: "border-emerald-500/15",
+    href: "/recommendations",
   },
 ];
 
@@ -107,13 +112,15 @@ export function PremiumCTA() {
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true, margin: "-40px" }}
                     transition={{ delay: i * 0.08, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                    className={`rounded-2xl border ${feat.border} ${feat.bg} p-5`}
+                    className="contents"
                   >
-                    <div className={`mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl border ${feat.border} bg-white/60 dark:bg-white/5`}>
-                      <feat.icon className={`h-4.5 w-4.5 ${feat.color}`} strokeWidth={1.8} />
-                    </div>
-                    <h3 className="mb-1 text-[15px] font-bold text-gray-900 dark:text-white">{feat.title}</h3>
-                    <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">{feat.description}</p>
+                    <Link href={feat.href} className={`rounded-2xl border ${feat.border} ${feat.bg} p-5 transition-transform hover:-translate-y-0.5`}>
+                      <div className={`mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl border ${feat.border} bg-white/60 dark:bg-white/5`}>
+                        <feat.icon className={`h-4.5 w-4.5 ${feat.color}`} strokeWidth={1.8} />
+                      </div>
+                      <h3 className="mb-1 text-[15px] font-bold text-gray-900 dark:text-white">{feat.title}</h3>
+                      <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">{feat.description}</p>
+                    </Link>
                   </motion.div>
                 ))}
               </motion.div>

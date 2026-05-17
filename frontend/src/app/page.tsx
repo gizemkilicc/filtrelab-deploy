@@ -1,6 +1,5 @@
 import { Navbar } from "@/components/ui/Navbar";
 import { FeaturedProducts } from "@/components/ui/FeaturedProducts";
-import { Chatbot } from "@/components/ui/Chatbot";
 import { HeroWave } from "@/components/ui/HeroWave";
 import { HowItWorks } from "@/components/ui/HowItWorks";
 import { StatsBar } from "@/components/ui/StatsBar";
@@ -34,8 +33,6 @@ export default function Home() {
       {/* Support and Feedback */}
       <SupportFeedback />
 
-      {/* Floating Chatbot */}
-      <Chatbot />
     </main>
   );
 }
