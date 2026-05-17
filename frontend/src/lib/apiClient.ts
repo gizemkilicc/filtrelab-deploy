@@ -313,6 +313,31 @@ export async function getMe(): Promise<AuthUser | null> {
   }
 }
 
+export async function updateMe(profile: {
+  firstName: string;
+  lastName: string;
+  email: string;
+}): Promise<{ success: true; user: AuthUser } | { success: false; error: string }> {
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, {
+      method: "PUT",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(profile),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: json.detail || json.error || "Profil güncellenemedi." };
+    }
+    if (typeof window !== "undefined") {
+      localStorage.setItem("filtre_user", JSON.stringify(json));
+      window.dispatchEvent(new CustomEvent("filtre-auth-changed"));
+    }
+    return { success: true, user: json as AuthUser };
+  } catch {
+    return { success: false, error: "Backend bağlantısı kurulamadı." };
+  }
+}
+
 export function logoutUser(): void {
   if (typeof window !== "undefined") {
     localStorage.removeItem("filtre_token");

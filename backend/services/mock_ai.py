@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 
 from .category_detector import detect_category

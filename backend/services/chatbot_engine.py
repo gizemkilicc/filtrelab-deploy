@@ -578,8 +578,11 @@ def generate_llm_reply(
     intent: str,
     preferences: dict[str, bool],
 ) -> str | None:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    model = os.getenv("OPENROUTER_MODEL")
     if not api_key:
+        return None
+    if not model:
         return None
 
     features = extract_product_features(analysis)
@@ -600,10 +603,10 @@ def generate_llm_reply(
 
     try:
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
-                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "model": model,
                 "messages": messages,
                 "temperature": 0.35,
                 "max_tokens": 420,
@@ -613,7 +616,7 @@ def generate_llm_reply(
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as exc:
-        print(f"[chatbot] OpenAI fallback to rules: {exc}")
+        print(f"[chatbot] OpenRouter fallback to rules: {exc}")
         return None
 
 

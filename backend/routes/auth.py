@@ -50,6 +50,12 @@ class SendVerificationRequest(BaseModel):
     email: str
 
 
+class UpdateProfileRequest(BaseModel):
+    firstName: str | None = None
+    lastName: str | None = None
+    email: str | None = None
+
+
 def _user_payload(user, db: Session | None = None) -> dict:
     first_name = (user.first_name or "").strip()
     last_name = (user.last_name or "").strip()
@@ -184,5 +190,48 @@ def get_me(
     user = get_user_by_id(db, int(payload["sub"]))
     if not user:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+
+    return _user_payload(user, db)
+
+
+@router.put("/me")
+def update_me(
+    body: UpdateProfileRequest,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    token = _parse_bearer(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum açmanız gerekiyor.")
+
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş oturum.")
+
+    user = get_user_by_id(db, int(payload["sub"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+
+    first_name = (body.firstName or "").strip()
+    last_name = (body.lastName or "").strip()
+    email = (body.email or "").strip().lower()
+
+    if not first_name:
+        raise HTTPException(status_code=400, detail="Ad boş olamaz.")
+    if not last_name:
+        raise HTTPException(status_code=400, detail="Soyad boş olamaz.")
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Geçersiz e-posta formatı.")
+
+    existing = get_user_by_email(db, email)
+    if existing and existing.id != user.id:
+        raise HTTPException(status_code=409, detail="Bu e-posta adresi zaten kayıtlı.")
+
+    user.first_name = first_name
+    user.last_name = last_name
+    user.name = f"{first_name} {last_name}".strip()
+    user.email = email
+    db.commit()
+    db.refresh(user)
 
     return _user_payload(user, db)
