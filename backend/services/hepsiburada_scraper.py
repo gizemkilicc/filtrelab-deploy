@@ -23,6 +23,7 @@ _HB_PAGE_SIZE = 50
 
 from .image_utils import is_valid_image_url, normalize_image_url, parse_srcset
 from .price_utils import parse_price_to_string
+from .review_analytics import compute_review_analytics
 
 _BASE = "https://www.hepsiburada.com"
 _UA = (
@@ -775,6 +776,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
         traceback.print_exc()
 
     reviews_loaded = len(reviews)
+    review_analytics = compute_review_analytics(reviews, rating_distribution, effective_max_reviews)
     review_stats = {
         "reviewCount": review_count,
         "reviewsLoaded": reviews_loaded,
@@ -783,6 +785,9 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
         "maxReviews": effective_max_reviews,
         "source": data_source.get("reviews", "none"),
         "reason": reviews_reason,
+        "starDistribution": review_analytics["starDistribution"],
+        "loadedByStar": review_analytics["loadedByStar"],
+        "sampleReviews": review_analytics["sampleReviews"],
     }
     if reviews_loaded == 0 and reviews_reason not in ("no_reviews_found", "not_started"):
         review_stats["error"] = "reviews_could_not_be_loaded"

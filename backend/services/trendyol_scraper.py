@@ -5,6 +5,8 @@ import asyncio
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
+from .review_analytics import compute_star_quota, compute_review_analytics
+
 TR_MAP = {
     "canlandirici": "Canlandırıcı", "gozenek": "Gözenek", "sikilastirici": "Sıkılaştırıcı",
     "urun": "Ürün", "gunes": "Güneş", "yuz": "Yüz", "sac": "Saç", "bakim": "Bakım",
@@ -582,6 +584,88 @@ async def _find_working_endpoint(page, product_id: str) -> str | None:
     return None
 
 
+_STAR_FILTER_PARAMS = ("star", "starFilter", "ratingFilter", "filterStar")
+
+
+async def _try_fetch_by_star_filter(
+    page,
+    base_url: str,
+    star: int,
+    quota: int,
+    seen: set[str],
+) -> list[dict]:
+    """Fetch reviews for a specific star rating using platform filter params."""
+    for param_name in _STAR_FILTER_PARAMS:
+        sep = "&" if "?" in base_url else "?"
+        filtered_url = f"{base_url}{sep}{param_name}={star}"
+        probe_url = _build_page_url(filtered_url, 0, _PAGE_SIZE)
+        body, status = await _refetch_with_status(page, probe_url)
+        if status != 200 or not body:
+            continue
+        probe_reviews, _, _ = _parse_review_body(body)
+        if not probe_reviews:
+            continue
+        # Verify filter works: sampled reviews must mostly match the target star
+        rated = [r for r in probe_reviews if r.get("rating") is not None]
+        if rated:
+            wrong = sum(1 for r in rated if int(r["rating"]) != star)
+            if wrong > len(rated) * 0.3:
+                print(f"[REVIEWS] star={star} param={param_name!r} filter ineffective ({wrong}/{len(rated)} wrong)")
+                continue
+        print(f"[REVIEWS] star={star} param={param_name!r} filter confirmed")
+        collected: list[dict] = []
+        page_num = 0
+        while len(collected) < quota:
+            url = _build_page_url(filtered_url, page_num, _PAGE_SIZE)
+            body, status = await _refetch_with_status(page, url)
+            if status in (403, 429) or not body:
+                break
+            page_reviews, _, _ = _parse_review_body(body)
+            if not page_reviews:
+                break
+            added = 0
+            for r in page_reviews:
+                dedup_key = r["id"] if r["id"] else r["text"][:80]
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    collected.append(r)
+                    added += 1
+            if added == 0:
+                break
+            page_num += 1
+            await asyncio.sleep(0.1)
+        print(f"[REVIEWS] star={star} supplemental loaded={len(collected)}")
+        return collected
+    return []
+
+
+async def _supplement_negative_reviews(
+    page,
+    base_url: str,
+    reviews: list[dict],
+    rating_dist: dict | None,
+    max_reviews: int,
+) -> list[dict]:
+    """Top up 1-star and 2-star reviews to their computed quota via star filter."""
+    if not rating_dist or not base_url:
+        return reviews
+    seen: set[str] = {r["id"] if r["id"] else r["text"][:80] for r in reviews}
+    star_quota = compute_star_quota(rating_dist, max_reviews)
+    extra: list[dict] = []
+    for neg_star in (1, 2):
+        available = rating_dist.get(str(neg_star), 0)
+        if not available:
+            continue
+        loaded = sum(1 for r in reviews if r.get("rating") == neg_star)
+        target = star_quota.get(str(neg_star), 0)
+        if loaded >= target:
+            continue
+        need = target - loaded
+        print(f"[REVIEWS] star={neg_star} loaded={loaded} target={target} need={need}")
+        extra.extend(await _try_fetch_by_star_filter(page, base_url, neg_star, need, seen))
+    return reviews + extra
+
+
 async def _extract_reviews_trendyol(
     page,
     captured_urls: list[str],
@@ -609,6 +693,7 @@ async def _extract_reviews_trendyol(
                     page, base_url, review_count, max_reviews
                 )
                 if reviews:
+                    reviews = await _supplement_negative_reviews(page, base_url, reviews, dist, max_reviews)
                     source = "intercepted_rate_limited" if reason == "rate_limited" else "intercepted"
                     return reviews, dist, source, completed, reason, api_total
 
@@ -620,6 +705,7 @@ async def _extract_reviews_trendyol(
                 page, base_url, review_count, max_reviews
             )
             if reviews:
+                reviews = await _supplement_negative_reviews(page, base_url, reviews, dist, max_reviews)
                 source = "api_rate_limited" if reason == "rate_limited" else "trendyol_reviews_api"
                 return reviews, dist, source, completed, reason, api_total
 
@@ -1105,12 +1191,13 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
 
     # Transparent warning for platform-capped pagination
     if reviews_reason in ("platform_limit_reached", "pagination_incomplete"):
-        platform_cap = reviews_api_total or review_count
         print(
             f"[REVIEWS WARNING] platform limit reached: "
             f"apiTotalCount={reviews_api_total} reviewCount={review_count} "
             f"loaded={reviews_loaded} reason={reviews_reason}"
         )
+
+    review_analytics = compute_review_analytics(reviews, rating_distribution, effective_max_reviews)
 
     review_stats = {
         "reviewCount": review_count,
@@ -1120,6 +1207,9 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
         "maxReviews": effective_max_reviews,
         "source": data_source.get("reviews", "none"),
         "reason": reviews_reason,
+        "starDistribution": review_analytics["starDistribution"],
+        "loadedByStar": review_analytics["loadedByStar"],
+        "sampleReviews": review_analytics["sampleReviews"],
     }
     if reviews_api_total is not None:
         review_stats["apiTotalCount"] = reviews_api_total

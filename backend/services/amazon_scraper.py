@@ -328,6 +328,9 @@ async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dic
         "source": "bot_protection_skipped",
         "reason": "bot_protection",
         "error": "reviews_could_not_be_loaded",
+        "starDistribution": None,
+        "loadedByStar": {str(s): 0 for s in range(1, 6)},
+        "sampleReviews": [],
     }
 
     return {

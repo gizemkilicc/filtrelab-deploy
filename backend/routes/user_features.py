@@ -31,8 +31,12 @@ class AnalysisHistoryCreate(BaseModel):
     productUrl: str
     image: str | None = None
     price: str | None = None
+    platform: str | None = None
     finalDecision: str | None = None
     trustScore: float | None = None
+    fakeReviewRisk: float | None = None
+    sentimentScore: float | None = None
+    pricePerformance: float | None = None
 
 
 class FavoriteCreate(BaseModel):
@@ -91,8 +95,12 @@ def _history_item(item: AnalysisHistory) -> dict[str, Any]:
         "productUrl": item.product_url,
         "image": item.image,
         "price": item.price,
+        "platform": item.platform,
         "finalDecision": item.final_decision,
         "trustScore": item.trust_score,
+        "fakeReviewRisk": item.fake_review_risk,
+        "sentimentScore": item.sentiment_score,
+        "pricePerformance": item.price_performance,
         "createdAt": _iso(item.created_at),
     }
 
@@ -163,8 +171,12 @@ def add_analysis_history(
         product_url=body.productUrl.strip(),
         image=body.image,
         price=body.price,
+        platform=body.platform,
         final_decision=body.finalDecision,
         trust_score=body.trustScore,
+        fake_review_risk=body.fakeReviewRisk,
+        sentiment_score=body.sentimentScore,
+        price_performance=body.pricePerformance,
     )
     db.add(item)
     db.commit()

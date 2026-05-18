@@ -24,6 +24,9 @@ def _build_review_stats(data: dict, max_reviews: int) -> dict:
         "maxReviews": raw.get("maxReviews", max_reviews),
         "source": raw.get("source", data.get("reviewsSource", "none")),
         "reason": raw.get("reason", "unknown"),
+        "starDistribution": raw.get("starDistribution"),
+        "loadedByStar": raw.get("loadedByStar"),
+        "sampleReviews": raw.get("sampleReviews", []),
     }
     if raw.get("error"):
         stats["error"] = raw["error"]
@@ -76,8 +79,9 @@ async def export_reviews(request: ReviewsExportRequest):
     """
     AI-team export endpoint. Returns a clean, stable review dataset.
 
-    Reviews are returned in platform default order.
-    Deduplication uses review ID when available, otherwise review text prefix.
+    Reviews are in platform default order by default. With balancedByStars=true,
+    reviews are sorted by star rating (interleaved: 5,1,4,2,3,...) to ensure
+    negative reviews appear even if cut off downstream.
     """
     max_reviews = request.maxReviews if request.maxReviews else _default_max_reviews()
     try:
@@ -85,12 +89,36 @@ async def export_reviews(request: ReviewsExportRequest):
         reviews = data.get("reviews") or []
         review_stats = _build_review_stats(data, max_reviews)
 
+        if request.balancedByStars and reviews:
+            by_star: dict[int, list] = {s: [] for s in range(1, 6)}
+            for r in reviews:
+                try:
+                    star = int(r.get("rating") or 0)
+                    if 1 <= star <= 5:
+                        by_star[star].append(r)
+                except (ValueError, TypeError):
+                    pass
+            # Interleave: 5, 1, 4, 2, 3
+            interleave_order = [5, 1, 4, 2, 3]
+            balanced: list = []
+            max_len = max(len(v) for v in by_star.values()) if by_star else 0
+            for i in range(max_len):
+                for star in interleave_order:
+                    bucket = by_star[star]
+                    if i < len(bucket):
+                        balanced.append(bucket[i])
+            reviews = balanced
+
         return {
             "product": {
                 "name": data.get("productName"),
                 "brand": data.get("brand"),
                 "platform": data.get("sourcePlatform"),
                 "url": request.url,
+                "price": data.get("price"),
+                "image": data.get("image"),
+                "rating": data.get("rating"),
+                "reviewCount": data.get("reviewCount"),
             },
             "reviews": reviews,
             "reviewStats": review_stats,

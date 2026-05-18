@@ -25,6 +25,7 @@ class ReviewsExportRequest(BaseModel):
     url: str
     maxReviews: Optional[int] = None
     format: str = "json"
+    balancedByStars: bool = False
 
 
 class AnalyzeResponse(BaseModel):

@@ -303,10 +303,22 @@ export async function getMe(): Promise<AuthUser | null> {
       typeof window !== "undefined" ? localStorage.getItem("filtre_token") : null;
     if (!token) return null;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const res = await fetch(`${API_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
-    if (!res.ok) return null;
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.removeItem("filtre_token");
+        localStorage.removeItem("filtre_user");
+      }
+      return null;
+    }
     return (await res.json()) as AuthUser;
   } catch {
     return null;

@@ -151,28 +151,39 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
     let mounted = true;
 
     const load = async () => {
-      const currentUser = await getMe();
-      if (!mounted) return;
-      setUser(currentUser);
-      setLoading(false);
+      // Safety net: never stay loading longer than 6 seconds regardless of backend state
+      const safetyTimer = window.setTimeout(() => {
+        if (mounted) setLoading(false);
+      }, 6000);
 
-      if (!currentUser) return;
+      try {
+        const currentUser = await getMe();
+        if (!mounted) return;
+        setUser(currentUser);
+        setLoading(false);
 
-      const [trackingRes, historyRes, favoritesRes, recommendationsRes] = await Promise.all([
-        getPriceTracking(),
-        getAnalysisHistory(),
-        getFavorites(),
-        getRecommendations(),
-      ]);
+        if (!currentUser) return;
 
-      if (!mounted) return;
-      setCounts({
-        tracking: trackingRes.success ? trackingRes.data.items.length : 0,
-        history: historyRes.success ? historyRes.data.items.length : 0,
-        favorites: favoritesRes.success ? favoritesRes.data.items.length : 0,
-        recommendations: recommendationsRes.success ? recommendationsRes.data.recommendations.length : 0,
-      });
-      setRecommendations(recommendationsRes.success ? recommendationsRes.data.recommendations.slice(0, 3) : []);
+        const [trackingRes, historyRes, favoritesRes, recommendationsRes] = await Promise.all([
+          getPriceTracking(),
+          getAnalysisHistory(),
+          getFavorites(),
+          getRecommendations(),
+        ]);
+
+        if (!mounted) return;
+        setCounts({
+          tracking: trackingRes.success ? trackingRes.data.items.length : 0,
+          history: historyRes.success ? historyRes.data.items.length : 0,
+          favorites: favoritesRes.success ? favoritesRes.data.items.length : 0,
+          recommendations: recommendationsRes.success ? recommendationsRes.data.recommendations.length : 0,
+        });
+        setRecommendations(recommendationsRes.success ? recommendationsRes.data.recommendations.slice(0, 3) : []);
+      } catch {
+        if (mounted) setLoading(false);
+      } finally {
+        window.clearTimeout(safetyTimer);
+      }
     };
 
     void load();
