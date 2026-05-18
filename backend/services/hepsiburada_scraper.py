@@ -57,6 +57,61 @@ _NAME_SUFFIXES = (
     " reviews", " yorumlari", " degerlendirmeleri",
 )
 
+_BAD_SELLER_KEYWORDS = (
+    "other-seller", "othersellers", "diger-satici",
+    "merchant-list", "seller-list", "other-merchants",
+    "other-offers", "marketplace-offers",
+)
+
+# JS snippet injected into any price evaluate() call to skip "Diğer satıcılar"
+_JS_BAD_CONTAINER_FN = """
+    const BAD = %s;
+    function inBadContainer(el) {
+        let node = el.parentElement, d = 0;
+        while (node && d++ < 12) {
+            const cls = (node.className || '').toLowerCase();
+            const id  = (node.id  || '').toLowerCase();
+            const tid = (node.getAttribute ? node.getAttribute('data-test-id') || '' : '').toLowerCase();
+            if (BAD.some(k => cls.includes(k) || id.includes(k) || tid.includes(k))) return true;
+            node = node.parentElement;
+        }
+        return false;
+    }
+""" % str(list(_BAD_SELLER_KEYWORDS))
+
+
+def _calculate_review_limit(total_review_count: int | None) -> int:
+    """
+    Compute how many reviews to fetch based on the product's total count.
+    Provides sufficient AI analysis sample without over-fetching.
+    """
+    if total_review_count is None or total_review_count <= 0:
+        return 50
+    if total_review_count <= 100:
+        return total_review_count
+    if total_review_count <= 500:
+        return min(200, total_review_count)
+    if total_review_count <= 2000:
+        return 400
+    if total_review_count <= 10000:
+        return 600
+    return 1000  # 10,000+ review products (iPhone, popular items)
+
+
+def _in_bad_container_bs4(el) -> bool:
+    """Return True if a BS4 element lives inside a 'Diğer satıcılar' container."""
+    node = el.parent
+    depth = 0
+    while node and depth < 12:
+        cls_str = " ".join(node.get("class", [])).lower() if isinstance(node.get("class"), list) else str(node.get("class", "")).lower()
+        id_str  = str(node.get("id", "")).lower()
+        tid_str = str(node.get("data-test-id", "")).lower()
+        if any(k in cls_str or k in id_str or k in tid_str for k in _BAD_SELLER_KEYWORDS):
+            return True
+        node = node.parent
+        depth += 1
+    return False
+
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -839,26 +894,37 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         continue
 
             if not price:
-                for sel in [
-                    "[data-test-id='price-current-price']",
-                    "[data-test-id='price']",
-                    "[data-testid='price']",
-                    "[itemprop='price']",
-                    "span[class*='price']",
-                    "[class*='currentPrice']",
-                    "[class*='priceValue']",
-                ]:
-                    try:
-                        el = await page.query_selector(sel)
-                        if el:
-                            raw_v = await el.get_attribute("content") or await el.inner_text()
-                            p = parse_price_to_string(raw_v.strip())
-                            if p:
-                                price = p
-                                data_source["price"] = "dom"
-                                break
-                    except Exception:
-                        continue
+                try:
+                    _dom_price = await page.evaluate("""
+                        () => {
+                            %s
+                            const sels = [
+                                "[data-test-id='price-current-price']",
+                                "[data-test-id='price']",
+                                "[data-testid='price']",
+                                "[itemprop='price']",
+                                "span[class*='price']",
+                                "[class*='currentPrice']",
+                                "[class*='priceValue']"
+                            ];
+                            for (const sel of sels) {
+                                for (const el of document.querySelectorAll(sel)) {
+                                    if (inBadContainer(el)) continue;
+                                    const v = el.getAttribute('content') || el.innerText || '';
+                                    if (v.trim().match(/\\d/)) return v.trim();
+                                }
+                            }
+                            return null;
+                        }
+                    """ % _JS_BAD_CONTAINER_FN)
+                    if _dom_price:
+                        p = parse_price_to_string(str(_dom_price))
+                        if p:
+                            price = p
+                            data_source["price"] = "dom_filtered"
+                            print(f"[scraper] hb price CHOSEN: src=dom_filtered value={price}")
+                except Exception:
+                    pass
 
             if not image:
                 for sel in [
@@ -933,28 +999,32 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
 
             if not price:
                 try:
-                    result_price = await page.evaluate("""
+                    _js_price2 = await page.evaluate("""
                         () => {
+                            %s
                             const sels = [
                                 '[data-test-id="price-current-price"]',
                                 '[class*="currentPrice"]',
                                 '[itemprop="price"]',
+                                'span[class*="price-value"]',
+                                'span[class*="product-price"]',
                             ];
                             for (const sel of sels) {
-                                const el = document.querySelector(sel);
-                                if (el) {
-                                    const v = el.getAttribute('content') || el.innerText;
-                                    if (v && v.trim()) return v.trim();
+                                for (const el of document.querySelectorAll(sel)) {
+                                    if (inBadContainer(el)) continue;
+                                    const v = el.getAttribute('content') || el.innerText || '';
+                                    if (v.trim().match(/\\d/)) return v.trim();
                                 }
                             }
                             return null;
                         }
-                    """)
-                    if result_price:
-                        p = parse_price_to_string(str(result_price))
+                    """ % _JS_BAD_CONTAINER_FN)
+                    if _js_price2:
+                        p = parse_price_to_string(str(_js_price2))
                         if p:
                             price = p
-                            data_source["price"] = "js"
+                            data_source["price"] = "js_filtered"
+                            print(f"[scraper] hb price CHOSEN: src=js_filtered value={price}")
                 except Exception:
                     pass
 
@@ -989,7 +1059,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                     if og_price and og_price.get('content'):
                         price_candidates.append(('og', og_price['content']))
 
-                    # 3) DOM selector'ları
+                    # 3) DOM selector'ları (diğer satıcılar container'larını atla)
                     for bs_sel in (
                         '[data-test-id="price-current-price"]',
                         '[data-test-id="default-price"]',
@@ -998,11 +1068,13 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         'div[class*="priceContainer"] span',
                     ):
                         try:
-                            el = _hb_soup_price.select_one(bs_sel)
-                            if el:
+                            for el in _hb_soup_price.select(bs_sel):
+                                if _in_bad_container_bs4(el):
+                                    continue
                                 txt = el.get_text(strip=True)
-                                if txt:
+                                if txt and re.search(r'\d', txt):
                                     price_candidates.append((bs_sel, txt))
+                                    break
                         except Exception:
                             continue
 
@@ -1037,6 +1109,36 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         print("[scraper] hb price: hiçbir aday parse edilemedi")
             except Exception as e:
                 print(f"[scraper] Hepsiburada price fallback error: {e}")
+
+            # ── Dynamic review limit ───────────────────────────────────────
+            # If caller did not pass an explicit max_reviews, compute it from
+            # the product's actual review count so we fetch a good sample size.
+            if max_reviews is None:
+                if not review_count:
+                    # Last-chance: parse review count from DOM if JSON-LD missed it
+                    try:
+                        _rc_html = await page.content()
+                        _rc_soup = BeautifulSoup(_rc_html, 'html.parser')
+                        for _rc_sel in (
+                            '[data-test-id="ratingAndReviewCount"]',
+                            'span[class*="ratingCount"]',
+                            'a[href*="-yorumlari"]',
+                            'div[class*="hermes-RatingPointBox"]',
+                        ):
+                            _rc_el = _rc_soup.select_one(_rc_sel)
+                            if _rc_el:
+                                _rc_txt = _rc_el.get_text(strip=True).replace('.', '').replace(',', '')
+                                _rc_m = re.search(r'(\d+)', _rc_txt)
+                                if _rc_m:
+                                    _rc_val = int(_rc_m.group(1))
+                                    if _rc_val > 0:
+                                        review_count = _rc_val
+                                        data_source.setdefault("reviewCount", "dom_rc")
+                                        break
+                    except Exception:
+                        pass
+                effective_max_reviews = _calculate_review_limit(review_count)
+                print(f"[scraper] hb total_reviews={review_count or 0}, review_limit={effective_max_reviews}")
 
             # ── 6. Reviews ─────────────────────────────────────────────────
             if effective_max_reviews > 0:
