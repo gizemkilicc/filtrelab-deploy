@@ -47,6 +47,13 @@ export function Chatbot() {
     setMessages(loadStoredMessages());
   }, []);
 
+  // Open chatbot when "Asistanı Keşfet" button dispatches this event
+  useEffect(() => {
+    const handler = () => setIsOpen(true);
+    window.addEventListener("filtre:open-chatbot", handler);
+    return () => window.removeEventListener("filtre:open-chatbot", handler);
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-24)));

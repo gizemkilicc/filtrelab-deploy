@@ -1,9 +1,9 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   ArrowRight,
@@ -266,17 +266,40 @@ export function HeroWave() {
   const prefersReducedMotion = useReducedMotion();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
   const [productUrl, setProductUrl] = useState("");
+  const [showUrlInput, setShowUrlInput] = useState(false);
 
-  const focusInput = () => {
-    inputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(() => inputRef.current?.focus(), 300);
+  // Open input automatically if URL query param is present on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlParam = params.get("url");
+    if (urlParam) {
+      setProductUrl(decodeURIComponent(urlParam));
+      setShowUrlInput(true);
+    }
+  }, []);
+
+  // Smooth scroll + focus whenever the input becomes visible
+  useEffect(() => {
+    if (!showUrlInput) return;
+    const t1 = setTimeout(() => {
+      inputContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    const t2 = setTimeout(() => inputRef.current?.focus(), 280);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [showUrlInput]);
+
+  const handleStartFiltering = () => setShowUrlInput(true);
+
+  const handleDiscoverAssistant = () => {
+    window.dispatchEvent(new CustomEvent("filtre:open-chatbot"));
   };
 
   const handleAnalyze = () => {
     const trimmed = productUrl.trim();
     if (!trimmed) {
-      focusInput();
+      inputRef.current?.focus();
       return;
     }
     router.push(`/dashboard?url=${encodeURIComponent(trimmed)}`);
@@ -325,14 +348,14 @@ export function HeroWave() {
 
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row lg:justify-start">
             <button
-              onClick={focusInput}
+              onClick={handleStartFiltering}
               className="btn-glass group relative z-50 cursor-pointer inline-flex h-12 items-center justify-center gap-2 rounded-full px-7 text-sm font-semibold text-white"
             >
               Filtrelemeye Başla
               <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5" />
             </button>
             <button
-              onClick={focusInput}
+              onClick={handleDiscoverAssistant}
               className="btn-holo relative z-50 cursor-pointer inline-flex h-12 items-center justify-center gap-2 rounded-full px-7 text-sm font-semibold text-white"
             >
               <Search className="h-4 w-4 text-cyan-200" />
@@ -340,31 +363,43 @@ export function HeroWave() {
             </button>
           </div>
 
-          {/* URL Input */}
-          <div className="mt-6 w-full max-w-xl lg:mx-0 mx-auto">
-            <div className="flex items-center gap-2 rounded-2xl border border-white/20 bg-white/[0.07] p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)] backdrop-blur-sm focus-within:border-cyan-200/40 focus-within:bg-white/[0.1] transition-all">
-              <input
-                ref={inputRef}
-                type="url"
-                value={productUrl}
-                onChange={(e) => setProductUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
-                placeholder="Trendyol ürün linkini yapıştır..."
-                className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none"
-              />
-              <button
-                onClick={handleAnalyze}
-                disabled={!productUrl.trim()}
-                className="btn-holo relative z-50 cursor-pointer inline-flex h-9 items-center gap-1.5 rounded-xl px-4 text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:animate-none"
+          {/* URL Input — only visible after "Filtrelemeye Başla" */}
+          <AnimatePresence>
+            {showUrlInput && (
+              <motion.div
+                key="url-input"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                transition={{ duration: 0.28, ease: "easeOut" }}
+                className="mt-6 w-full max-w-xl lg:mx-0 mx-auto"
+                ref={inputContainerRef as React.Ref<HTMLDivElement>}
               >
-                <Sparkles className="h-3.5 w-3.5 text-cyan-200" />
-                Analiz Et
-              </button>
-            </div>
-            <p className="mt-2 text-center text-[11px] text-white/30 lg:text-left">
-              Trendyol · Hepsiburada · Amazon linklerini destekler
-            </p>
-          </div>
+                <div className="flex items-center gap-2 rounded-2xl border border-white/20 bg-white/[0.07] p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)] backdrop-blur-sm focus-within:border-cyan-200/40 focus-within:bg-white/[0.1] transition-all">
+                  <input
+                    ref={inputRef}
+                    type="url"
+                    value={productUrl}
+                    onChange={(e) => setProductUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
+                    placeholder="Trendyol ürün linkini yapıştır..."
+                    className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/35 outline-none"
+                  />
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={!productUrl.trim()}
+                    className="btn-holo relative z-50 cursor-pointer inline-flex h-9 items-center gap-1.5 rounded-xl px-4 text-sm font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:animate-none"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-cyan-200" />
+                    Analiz Et
+                  </button>
+                </div>
+                <p className="mt-2 text-center text-[11px] text-white/30 lg:text-left">
+                  Trendyol · Hepsiburada · Amazon linklerini destekler
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="mt-10 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
             {trustSignals.map(([value, label]) => (
