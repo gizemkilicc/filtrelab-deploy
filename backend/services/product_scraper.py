@@ -7,6 +7,9 @@ falling back to the generic scraper for unknown sites.
 All scrapers return the same dict schema.
 """
 
+import asyncio
+import sys
+
 from .platform_detector import detect_platform, platform_display_name
 from .trendyol_scraper import scrape_trendyol_product
 from .hepsiburada_scraper import scrape_hepsiburada_product
@@ -30,7 +33,41 @@ async def _attach_reviews(result: dict, url: str, platform: str, max_reviews: in
     return result
 
 
+def _run_on_proactor_loop(coro_factory):
+    """Run an async scraping job on a fresh, Playwright-safe event loop.
+
+    On Windows, Playwright spawns its browser as a subprocess, which only
+    works on the ProactorEventLoop. uvicorn may run on a SelectorEventLoop
+    (which raises NotImplementedError), so the scraper is always given its
+    own correct loop here — regardless of how the server was started.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro_factory())
+    finally:
+        try:
+            loop.close()
+        finally:
+            asyncio.set_event_loop(None)
+
+
 async def scrape_product(url: str, max_reviews: int | None = None) -> dict:
+    """
+    Public entry point. Runs the scraper in a worker thread on a dedicated
+    ProactorEventLoop so Playwright works no matter how the server's event
+    loop was created (uvicorn --reload, plain uvicorn, py main.py, ...).
+    """
+    return await asyncio.to_thread(
+        _run_on_proactor_loop,
+        lambda: _scrape_product_impl(url, max_reviews),
+    )
+
+
+async def _scrape_product_impl(url: str, max_reviews: int | None = None) -> dict:
     """
     Route a product URL to the appropriate scraper.
     Never raises — returns a safe partial result on failure.

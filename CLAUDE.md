@@ -10,6 +10,12 @@ cd backend && source .venv/bin/activate && python -m uvicorn main:app --reload -
 ```
 API docs: http://127.0.0.1:8000/docs
 
+## Windows Backend Başlatma
+
+Windows'ta backend'i `backend/` klasöründen **`py dev.py`** ile başlat — hot-reload'lu, Windows-güvenli giriş noktası.
+
+**`py -m uvicorn main:app --reload` KULLANMA** — Windows'ta event loop / Playwright (`NotImplementedError`) sorununa yol açar.
+
 **Frontend** (Next.js on port 3000):
 ```bash
 cd frontend && npm run dev
