@@ -112,10 +112,10 @@ _TYPES: list[dict] = [
     },
     {
         "name": "maskara",
-        "trigger": ["maskara", "mascara"],
-        "queries": ["maskara göz makyajı", "uzatıcı maskara"],
-        "required": ["maskara", "mascara", "göz"],
-        "forbidden": ["parfüm", "krem", "deodorant", "lamba", "telefon", "kıyafet"],
+        "trigger": ["maskara", "mascara", "kirpik"],
+        "queries": ["maskara", "siyah maskara", "hacim veren maskara", "kirpik uzatıcı maskara"],
+        "required": ["maskara", "mascara"],
+        "forbidden": ["parfüm", "krem", "cream", "nemlendirici", "deodorant", "lamba", "telefon", "kıyafet"],
     },
     {
         "name": "ruj",
@@ -310,19 +310,25 @@ def extract_product_type(product_name: str, category: str, brand: str = "", brea
         required    — list[str], alt name must contain at least one
         forbidden   — list[str], alt name must contain none
     """
+    name_only_norm = _norm(product_name or "")
     combined = " ".join([product_name or "", category or "", breadcrumb or "", brand or ""])
     name_norm = _norm(combined)
 
-    # Find the MOST SPECIFIC matching type (longer trigger phrase wins)
-    best: dict | None = None
-    best_trigger_len = 0
+    def find_best(haystack: str) -> tuple[dict | None, int]:
+        best_match: dict | None = None
+        best_len = 0
+        for pt in _TYPES:
+            for trigger in pt["trigger"]:
+                if _norm(trigger) in haystack and len(trigger) > best_len:
+                    best_match = pt
+                    best_len = len(trigger)
+        return best_match, best_len
 
-    for pt in _TYPES:
-        for trigger in pt["trigger"]:
-            if _norm(trigger) in name_norm:
-                if len(trigger) > best_trigger_len:
-                    best = pt
-                    best_trigger_len = len(trigger)
+    # Product name is authoritative. Category words like "cilt bakım" must not
+    # override a specific product name such as "maskara".
+    best, best_trigger_len = find_best(name_only_norm)
+    if not best:
+        best, best_trigger_len = find_best(name_norm)
 
     if best:
         print(f"[product_type] detected: {best['name']!r}  (trigger len={best_trigger_len})")

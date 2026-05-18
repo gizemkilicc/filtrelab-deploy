@@ -708,16 +708,20 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                     print(f"[hepsiburada] JS price error: {e}")
 
             # ── 6. Review texts + rating distribution ──────────────────────
-            try:
-                reviews, rating_distribution, reviews_source, reviews_completed, reviews_reason = (
-                    await _extract_reviews_hepsiburada(page, url, review_count, effective_max_reviews)
-                )
-                data_source["reviews"] = reviews_source
-            except Exception as e:
-                print(f"[hepsiburada] review extraction error: {e}")
-                reviews, rating_distribution, reviews_source = [], None, "error"
-                reviews_completed, reviews_reason = False, "extraction_error"
-                data_source["reviews"] = "error"
+            if effective_max_reviews > 0:
+                try:
+                    reviews, rating_distribution, reviews_source, reviews_completed, reviews_reason = (
+                        await _extract_reviews_hepsiburada(page, url, review_count, effective_max_reviews)
+                    )
+                    data_source["reviews"] = reviews_source
+                except Exception as e:
+                    print(f"[hepsiburada] review extraction error: {e}")
+                    reviews, rating_distribution, reviews_source = [], None, "error"
+                    reviews_completed, reviews_reason = False, "extraction_error"
+                    data_source["reviews"] = "error"
+            else:
+                reviews_reason = "not_requested"
+                data_source["reviews"] = "none"
 
             # ── 7. Body regex (last resort) ────────────────────────────────
             try:

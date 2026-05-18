@@ -13,6 +13,21 @@ from .hepsiburada_scraper import scrape_hepsiburada_product
 from .amazon_scraper import scrape_amazon_product
 from .generic_scraper import scrape_generic_product
 from .data_quality import normalize_scraper_result
+from .review_extractor import extract_reviews
+
+
+async def _attach_reviews(result: dict, url: str, platform: str, max_reviews: int | None) -> dict:
+    if not max_reviews or max_reviews <= 0 or platform not in {"trendyol", "hepsiburada", "amazon_tr"}:
+        return result
+    review_data = await extract_reviews(url, platform, max_reviews=max_reviews)
+    result["reviews"] = review_data.get("reviews", [])
+    result["reviewsLoaded"] = review_data.get("reviewsLoaded", 0)
+    result["reviewsSource"] = review_data.get("reviewsSource", "none")
+    result["reviewStats"] = review_data.get("reviewStats", {})
+    data_source = result.get("dataSource") or {}
+    data_source["reviews"] = result["reviewsSource"]
+    result["dataSource"] = data_source
+    return result
 
 
 async def scrape_product(url: str, max_reviews: int | None = None) -> dict:
@@ -26,19 +41,21 @@ async def scrape_product(url: str, max_reviews: int | None = None) -> dict:
 
     try:
         if platform == "trendyol":
-            return normalize_scraper_result(
-                await scrape_trendyol_product(url, max_reviews=max_reviews),
-                url, platform_display_name(platform)
-            )
+            result = await scrape_trendyol_product(url, max_reviews=max_reviews or 0)
+            return normalize_scraper_result(result, url, platform_display_name(platform))
         elif platform == "hepsiburada":
+            result = await scrape_hepsiburada_product(url, max_reviews=0)
             return normalize_scraper_result(
-                await scrape_hepsiburada_product(url, max_reviews=max_reviews),
-                url, platform_display_name(platform)
+                await _attach_reviews(result, url, platform, max_reviews),
+                url,
+                platform_display_name(platform),
             )
         elif platform == "amazon_tr":
+            result = await scrape_amazon_product(url, max_reviews=0)
             return normalize_scraper_result(
-                await scrape_amazon_product(url, max_reviews=max_reviews),
-                url, platform_display_name(platform)
+                await _attach_reviews(result, url, platform, max_reviews),
+                url,
+                platform_display_name(platform),
             )
         else:
             result = await scrape_generic_product(url)

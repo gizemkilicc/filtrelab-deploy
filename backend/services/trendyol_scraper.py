@@ -2,7 +2,7 @@ import os
 import re
 import json
 import asyncio
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from playwright.async_api import async_playwright
 
 from .review_analytics import compute_star_quota, compute_review_analytics
@@ -21,6 +21,23 @@ _BAD_IMAGE_PATTERNS = ("logo", "icon", "svg", "placeholder", "default", "blank",
 
 _PAGE_SIZE = 50
 _MAX_REVIEWS = int(os.getenv("MAX_REVIEWS", "1000"))
+
+_EMBEDDED_KEYWORDS = (
+    "productdetail", "productdata", "review", "comment", "rating", "campaign",
+    "price", "offer", "sellingprice", "discountedprice", "saleprice",
+)
+_PRICE_KEYS = {
+    "price", "saleprice", "sellingprice", "discountedprice", "campaignprice",
+    "originalprice", "pricevalue", "basketprice", "productprice",
+}
+_COUNT_KEYS = {
+    "reviewcount", "commentcount", "ratingcount", "totalreviewcount",
+    "totalcommentcount", "totalelements", "totalcount",
+}
+_QUESTION_KEYS = {
+    "questioncount", "totalquestioncount", "questiontotalcount",
+    "answeredquestioncount", "totalquestions", "qnacount",
+}
 
 _ENDPOINT_TEMPLATES = [
     "https://public.trendyol.com/discovery-web-productgw-service/api/ratings/{pid}?storefrontId=1&culture=tr-TR",
@@ -52,6 +69,30 @@ def format_price_turkish(value) -> str:
         return f"{int_str},{dec_part:02d} TL" if dec_part > 0 else f"{int_str} TL"
     except Exception:
         return str(value)
+
+
+def _price_to_float(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = str(value).replace("TL", "").replace("₺", "").strip()
+    text = re.sub(r"[^\d,.]", "", text)
+    if not text:
+        return None
+    try:
+        if "," in text:
+            return float(text.replace(".", "").replace(",", "."))
+        if "." in text and len(text.rsplit(".", 1)[-1]) in (1, 2):
+            return float(text)
+        return float(text.replace(".", ""))
+    except ValueError:
+        return None
+
+
+def _format_price_candidate(value: str | None) -> str | None:
+    parsed = _price_to_float(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return format_price_turkish(parsed)
 
 
 def _is_valid_image(url: str | None) -> bool:
@@ -178,6 +219,135 @@ async def _extract_image_via_js(page) -> str | None:
     return None
 
 
+async def extract_price_candidates(page, jsonld_price: str | None = None, meta_price: str | None = None) -> list[dict]:
+    candidates: list[dict] = []
+    if jsonld_price:
+        formatted = _format_price_candidate(jsonld_price)
+        if formatted:
+            candidates.append({
+                "text": formatted,
+                "source": "jsonld_offers",
+                "parentText": "JSON-LD offers.price",
+                "confidence": 80,
+            })
+    if meta_price:
+        formatted = _format_price_candidate(meta_price)
+        if formatted:
+            candidates.append({
+                "text": formatted,
+                "source": "meta_product_price",
+                "parentText": "meta product:price:amount",
+                "confidence": 40,
+            })
+
+    try:
+        dom_candidates = await page.evaluate("""
+            () => {
+                const selectors = [
+                    '.prc-dsc',
+                    '.prc-slg',
+                    '.prc-box-dscntd',
+                    '.product-price-container',
+                    '[data-testid*="price"]',
+                    '[class*="product-price"]',
+                    '[class*="price-container"]'
+                ];
+                const badContext = [
+                    'diğer satıcı', 'diger satici', 'benzer ürün', 'benzer urun',
+                    'taksit', 'kargo', 'önerilen', 'onerilen', 'sepete ekle',
+                    'birlikte al', 'kampanya'
+                ];
+                const out = [];
+                const seen = new Set();
+                const pushCandidate = (el, selector) => {
+                    if (!el) return;
+                    const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+                    const match = text.match(/(?:₺\\s*)?([\\d]{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?|\\d+(?:,\\d{1,2})?)\\s*(?:TL|₺)?/i);
+                    if (!match) return;
+                    const priceText = match[0].includes('TL') || match[0].includes('₺') ? match[0] : match[1] + ' TL';
+                    if (seen.has(priceText + selector)) return;
+                    seen.add(priceText + selector);
+                    const parent = el.closest('.product-detail-container, .product-container, .pr-in-w, .pdp, main, body');
+                    const parentText = ((parent && parent.textContent) || '').replace(/\\s+/g, ' ').trim().slice(0, 260);
+                    let confidence = 0;
+                    if (/prc-dsc|prc-slg|prc-box-dscntd|product-price-container/.test(selector)) confidence += 72;
+                    if (parent && parent !== document.body) confidence += 20;
+                    const ctx = parentText.toLocaleLowerCase('tr-TR');
+                    for (const bad of badContext) {
+                        if (ctx.includes(bad)) confidence -= 50;
+                    }
+                    out.push({ text: priceText, source: selector, parentText, confidence });
+                };
+                for (const selector of selectors) {
+                    document.querySelectorAll(selector).forEach(el => pushCandidate(el, selector));
+                }
+                return out;
+            }
+        """)
+        for item in dom_candidates or []:
+            formatted = _format_price_candidate(item.get("text"))
+            if not formatted:
+                continue
+            candidates.append({
+                "text": formatted,
+                "source": item.get("source", "dom"),
+                "parentText": item.get("parentText", "")[:160],
+                "confidence": int(item.get("confidence") or 0),
+            })
+    except Exception as e:
+        print(f"[PRICE CANDIDATES] extraction_error={e}")
+
+    candidates = [c for c in candidates if _price_to_float(c.get("text")) is not None]
+    candidates.sort(key=lambda c: c.get("confidence", 0), reverse=True)
+    print(f"[PRICE DOM CANDIDATES] {json.dumps([c for c in candidates if not str(c.get('source')).startswith(('jsonld', 'meta'))][:8], ensure_ascii=False)}")
+    return candidates
+
+
+def _select_price_candidate(candidates: list[dict]) -> tuple[str | None, str | None]:
+    if not candidates:
+        print("[PRICE SELECTED] None")
+        print("[PRICE SOURCE] missing")
+        print("[PRICE WHY] no candidates found")
+        return None, None
+
+    # Separate DOM main-container candidates from API/JSON sources
+    dom_main = [
+        c for c in candidates
+        if any(sel in str(c.get("source", ""))
+               for sel in ("prc-dsc", "prc-slg", "prc-box-dscntd", "product-price-container"))
+    ]
+    api_candidates = [
+        c for c in candidates
+        if str(c.get("source", "")).startswith(("embedded_json", "jsonld", "meta"))
+    ]
+
+    selected = candidates[0]
+    why = f"highest confidence={selected.get('confidence')} among {len(candidates)} candidates"
+
+    # If DOM main-container and API sources exist, compare them
+    if dom_main and api_candidates:
+        dom_price = _price_to_float(dom_main[0].get("text"))
+        api_price = _price_to_float(api_candidates[0].get("text"))
+        if dom_price and api_price:
+            diff_pct = abs(dom_price - api_price) / max(dom_price, api_price)
+            if diff_pct > 0.05:
+                # Sources disagree by >5% → prefer main product DOM container
+                print(
+                    f"[PRICE WHY] source mismatch: dom_main={dom_price} ({dom_main[0].get('source')}) "
+                    f"vs api={api_price} ({api_candidates[0].get('source')}) diff={diff_pct:.1%} "
+                    f"— preferring DOM main container"
+                )
+                selected = dom_main[0]
+                why = f"mismatch resolved: dom_main preferred (diff={diff_pct:.1%})"
+            else:
+                why += f"; sources agree within {diff_pct:.1%}"
+
+    print(f"[PRICE SELECTED] {selected.get('text')}")
+    print(f"[PRICE SOURCE] {selected.get('source')} confidence={selected.get('confidence')}")
+    print(f"[PRICE WHY] {why}")
+    return selected.get("text"), selected.get("source")
+
+
 async def _extract_review_count_via_js(page) -> int | None:
     try:
         result = await page.evaluate("""
@@ -244,7 +414,621 @@ def _extract_product_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _parse_review_body(body: dict) -> tuple[list[dict], dict | None, dict]:
+def _iter_jsonld_products(data):
+    if isinstance(data, list):
+        for item in data:
+            yield from _iter_jsonld_products(item)
+    elif isinstance(data, dict):
+        node_type = data.get("@type")
+        if node_type == "Product" or (isinstance(node_type, list) and "Product" in node_type):
+            yield data
+        for key in ("@graph", "graph", "itemListElement"):
+            child = data.get(key)
+            if child:
+                yield from _iter_jsonld_products(child)
+        item = data.get("item")
+        if item:
+            yield from _iter_jsonld_products(item)
+
+
+def _extract_balanced_json(text: str, start: int) -> str | None:
+    while start < len(text) and text[start] not in "{[":
+        start += 1
+    if start >= len(text):
+        return None
+    opener = text[start]
+    closer = "}" if opener == "{" else "]"
+    stack = [closer]
+    in_string = False
+    escape = False
+    quote = ""
+    for i in range(start + 1, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                in_string = False
+            continue
+        if ch in ("'", '"'):
+            in_string = True
+            quote = ch
+            continue
+        if ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif stack and ch == stack[-1]:
+            stack.pop()
+            if not stack:
+                return text[start:i + 1]
+    return None
+
+
+def _loads_jsonish(raw: str):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _extract_embedded_json_objects(html: str) -> list[tuple[str, object]]:
+    objects: list[tuple[str, object]] = []
+    if not html:
+        return objects
+
+    for idx, match in enumerate(re.finditer(
+        r"<script\b([^>]*)>(.*?)</script>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )):
+        attrs = match.group(1) or ""
+        script = match.group(2) or ""
+        attrs_l = attrs.lower()
+        script_l = script.lower()
+        source = f"script_{idx}"
+
+        if "application/ld+json" in attrs_l:
+            data = _loads_jsonish(script)
+            if data is not None:
+                objects.append(("jsonld", data))
+            continue
+
+        if "__next_data__" in attrs_l or "__next_data__" in script_l:
+            data = _loads_jsonish(script)
+            if data is not None:
+                objects.append(("__NEXT_DATA__", data))
+                continue
+
+        if not any(k in script_l for k in _EMBEDDED_KEYWORDS):
+            continue
+
+        # Try direct JSON first, then assignments such as window.__INITIAL_STATE__ = {...}
+        data = _loads_jsonish(script)
+        if data is not None:
+            objects.append((source, data))
+            continue
+
+        for key in (
+            "__INITIAL_STATE__", "__PRODUCT_DETAIL_APP_INITIAL_STATE__", "__PRODUCT_DETAIL_STATE__",
+            "productDetail", "productData", "window.__INITIAL_STATE__",
+        ):
+            pos = script.find(key)
+            if pos == -1:
+                continue
+            raw_json = _extract_balanced_json(script, pos)
+            data = _loads_jsonish(raw_json or "")
+            if data is not None:
+                objects.append((key, data))
+                break
+
+    print(f"[SOURCE JSON] parsed={len(objects)}")
+    return objects
+
+
+def _path_has(path: list[str], *needles: str) -> bool:
+    joined = ".".join(path).lower()
+    return any(n in joined for n in needles)
+
+
+def _normalise_candidate_price(value) -> str | None:
+    if isinstance(value, dict):
+        for key in ("value", "text", "price", "amount", "sellingPrice", "discountedPrice"):
+            if key in value:
+                formatted = _normalise_candidate_price(value.get(key))
+                if formatted:
+                    return formatted
+        return None
+    return _format_price_candidate(str(value))
+
+
+def _extract_json_price_candidates(objects: list[tuple[str, object]], product_id: str | None) -> list[dict]:
+    candidates: list[dict] = []
+
+    def walk(value, source: str, path: list[str], product_context: bool):
+        current_context = product_context
+        if isinstance(value, dict):
+            lower = {str(k).lower(): v for k, v in value.items()}
+            dict_text = json.dumps(value, ensure_ascii=False)[:2500].lower()
+            if product_id and product_id in dict_text:
+                current_context = True
+            if any(k in lower for k in ("productid", "contentid", "id")) and any(
+                token in ".".join(path).lower() for token in ("product", "detail", "content")
+            ):
+                current_context = True
+
+            for key, raw in value.items():
+                key_l = str(key).lower()
+                next_path = path + [key_l]
+                if key_l in _PRICE_KEYS:
+                    formatted = _normalise_candidate_price(raw)
+                    if formatted:
+                        confidence = 75
+                        if key_l in {"sellingprice", "discountedprice", "saleprice", "productprice"}:
+                            confidence += 5
+                        if current_context or _path_has(next_path, "productdetail", "product", "pdp", "content"):
+                            confidence += 10
+                        if _path_has(next_path, "coupon", "kupon", "shipping", "cargo", "kargo", "installment", "taksit", "othermerchant", "merchant"):
+                            confidence -= 80
+                        candidates.append({
+                            "text": formatted,
+                            "source": f"embedded_json:{source}:{'.'.join(next_path[-4:])}",
+                            "parentText": ".".join(next_path[-6:]),
+                            "confidence": confidence,
+                        })
+                walk(raw, source, next_path, current_context)
+        elif isinstance(value, list):
+            for idx, child in enumerate(value[:300]):
+                walk(child, source, path + [str(idx)], current_context)
+
+    for source, data in objects:
+        walk(data, source, [], False)
+
+    unique: dict[tuple[str, str], dict] = {}
+    for c in candidates:
+        key = (c["text"], c["source"])
+        if key not in unique or c["confidence"] > unique[key]["confidence"]:
+            unique[key] = c
+    out = sorted(unique.values(), key=lambda c: c.get("confidence", 0), reverse=True)
+    print(f"[PRICE JSON CANDIDATES] {json.dumps(out[:10], ensure_ascii=False)}")
+    return out
+
+
+def _extract_json_review_count(objects: list[tuple[str, object]], product_id: str | None) -> tuple[int | None, str | None]:
+    candidates: list[tuple[int, str, int]] = []
+
+    def walk(value, source: str, path: list[str], product_context: bool):
+        current_context = product_context
+        if isinstance(value, dict):
+            text_preview = json.dumps(value, ensure_ascii=False)[:2500].lower()
+            if product_id and product_id in text_preview:
+                current_context = True
+            for key, raw in value.items():
+                key_l = str(key).lower()
+                next_path = path + [key_l]
+                if key_l in _COUNT_KEYS:
+                    n = _extract_first_number(raw)
+                    if n is not None and n > 0:
+                        score = 50
+                        if key_l in {"reviewcount", "commentcount", "ratingcount", "totalreviewcount", "totalcommentcount"}:
+                            score += 30
+                        if current_context or _path_has(next_path, "product", "detail", "rating", "review", "comment"):
+                            score += 20
+                        if _path_has(next_path, "search", "listing", "merchant", "seller", "coupon", "campaign"):
+                            score -= 50
+                        if score >= 60:
+                            candidates.append((score, f"embedded_json:{source}:{'.'.join(next_path[-5:])}", n))
+                walk(raw, source, next_path, current_context)
+        elif isinstance(value, list):
+            for idx, child in enumerate(value[:300]):
+                walk(child, source, path + [str(idx)], product_context)
+
+    for source, data in objects:
+        walk(data, source, [], False)
+
+    candidates.sort(reverse=True)
+    if candidates:
+        score, source, count = candidates[0]
+        print(f"[COUNT SOURCE] embedded reviewCount={count} source={source} score={score}")
+        return count, source
+    return None, None
+
+
+def _extract_json_question_count(objects: list[tuple[str, object]], product_id: str | None) -> tuple[int | None, str | None]:
+    candidates: list[tuple[int, str, int]] = []
+
+    def walk(value, source: str, path: list[str], product_context: bool):
+        current_context = product_context
+        if isinstance(value, dict):
+            text_preview = json.dumps(value, ensure_ascii=False)[:2500].lower()
+            if product_id and product_id in text_preview:
+                current_context = True
+            for key, raw in value.items():
+                key_l = str(key).lower()
+                next_path = path + [key_l]
+                if key_l in _QUESTION_KEYS:
+                    n = _extract_first_number(raw)
+                    if n is not None and n >= 0:
+                        score = 50
+                        if current_context or _path_has(next_path, "product", "detail", "question"):
+                            score += 20
+                        if _path_has(next_path, "search", "listing", "merchant", "seller"):
+                            score -= 50
+                        if score >= 50:
+                            candidates.append((score, f"embedded_json:{source}:{'.'.join(next_path[-5:])}", n))
+                walk(raw, source, next_path, current_context)
+        elif isinstance(value, list):
+            for idx, child in enumerate(value[:300]):
+                walk(child, source, path + [str(idx)], product_context)
+
+    for source, data in objects:
+        walk(data, source, [], False)
+
+    candidates.sort(reverse=True)
+    if candidates:
+        score, source, count = candidates[0]
+        print(f"[COUNT SOURCE] embedded questionCount={count} source={source} score={score}")
+        return count, source
+    return None, None
+
+
+def _extract_embedded_reviews(objects: list[tuple[str, object]], product_name: str | None) -> tuple[list[dict], dict | None, str]:
+    best_reviews: list[dict] = []
+    best_dist: dict | None = None
+    best_source = "embedded_json"
+    for source, data in objects:
+        reviews, dist, _ = _parse_review_body(data, product_name)
+        if len(reviews) > len(best_reviews):
+            best_reviews = reviews
+            best_dist = dist
+            best_source = f"embedded_json:{source}"
+    print(f"[REVIEWS] embedded_json={len(best_reviews)}")
+    return best_reviews, best_dist, best_source
+
+
+def _debug_json_parse_failure(body: dict, product_name: str | None = None) -> None:
+    try:
+        keys = list(body.keys())[:30] if isinstance(body, dict) else []
+        print(f"[REVIEWS DEBUG] raw top-level keys={keys}")
+
+        if isinstance(body, dict):
+            for top_k, top_v in list(body.items())[:6]:
+                if isinstance(top_v, dict):
+                    nested_keys = list(top_v.keys())[:20]
+                    print(f"[REVIEWS DEBUG] nested keys under '{top_k}'={nested_keys}")
+                    for sub_k, sub_v in list(top_v.items())[:3]:
+                        if isinstance(sub_v, list) and sub_v:
+                            first = sub_v[0]
+                            if isinstance(first, dict):
+                                print(f"[REVIEWS DEBUG] list '{top_k}.{sub_k}' item keys={list(first.keys())[:15]}")
+                                print(f"[REVIEWS DEBUG] first item preview={json.dumps(first, ensure_ascii=False)[:300]}")
+                elif isinstance(top_v, list) and top_v:
+                    first = top_v[0]
+                    if isinstance(first, dict):
+                        print(f"[REVIEWS DEBUG] list '{top_k}' item keys={list(first.keys())[:15]}")
+                        print(f"[REVIEWS DEBUG] first 2 items={json.dumps(top_v[:2], ensure_ascii=False)[:400]}")
+
+        preview = json.dumps(body, ensure_ascii=False)[:1200]
+        print(f"[REVIEWS DEBUG] raw preview={preview}")
+        retry_reviews = _dedupe_reviews(_collect_reviews_recursive(body, product_name), product_name)
+        print(f"[REVIEWS DEBUG] recursive_retry={len(retry_reviews)}")
+    except Exception as e:
+        print(f"[REVIEWS DEBUG] failed to inspect raw response: {e}")
+
+
+def _try_known_trendyol_structures(body: dict, product_name: str | None = None) -> list[dict]:
+    """Try known Trendyol API container paths before falling back to recursive search."""
+    container_paths = [
+        ["result", "productReviews"],
+        ["result", "commentList"],
+        ["result", "reviews"],
+        ["result", "content"],
+        ["result", "elements"],
+        ["result", "items"],
+        ["result", "reviewList"],
+        ["result", "commentItems"],
+        ["result", "reviewsContent"],
+        ["data", "content"],
+        ["data", "reviews"],
+        ["data", "commentList"],
+        ["data", "items"],
+        ["productReviews"],
+        ["commentList"],
+        ["reviews"],
+        ["comments"],
+        ["content"],
+        ["elements"],
+        ["items"],
+        ["reviewList"],
+        ["commentItems"],
+        ["reviewsContent"],
+    ]
+    text_keys_ordered = [
+        "comment", "commenttext", "reviewtext", "text",
+        "message", "description", "commentcontent", "reviewcomment",
+        "userreviewcomment", "body", "feedback", "opinion", "content",
+    ]
+    rating_keys_ordered = [
+        "commentrate", "rating", "rate", "star", "starrating",
+        "userreviewrate", "ratingvalue", "commentrating", "reviewrate", "score",
+    ]
+    user_keys_ordered = [
+        "userdisplayname", "username", "user", "nickname",
+        "customername", "userfullname", "displayname",
+    ]
+    date_keys_ordered = [
+        "commentdate", "date", "createddate", "reviewdate", "userreviewdate", "lastmodifieddate",
+    ]
+
+    def _get_path(node, parts: list[str]):
+        for part in parts:
+            if not isinstance(node, dict):
+                return None
+            found = node.get(part)
+            if found is None:
+                found = next((v for k, v in node.items() if k.lower() == part.lower()), None)
+            node = found
+        return node
+
+    for path in container_paths:
+        review_list = _get_path(body, path)
+        if not isinstance(review_list, list) or not review_list:
+            continue
+        if not isinstance(review_list[0], dict):
+            continue
+        print(f"[REVIEWS DEBUG] known structure path={'.'.join(path)!r} count={len(review_list)}")
+
+        reviews = []
+        for item in review_list:
+            if not isinstance(item, dict):
+                continue
+            lower_item = {str(k).lower(): v for k, v in item.items()}
+            text = None
+            for key in text_keys_ordered:
+                raw = lower_item.get(key)
+                if isinstance(raw, str) and len(raw.strip()) >= 10:
+                    if not _looks_like_ui_review_text(raw, product_name):
+                        text = _normalise_review_text(raw)
+                        break
+            if not text:
+                continue
+            rating = None
+            for key in rating_keys_ordered:
+                n = _extract_first_number(lower_item.get(key))
+                if n is not None and 1 <= n <= 5:
+                    rating = n
+                    break
+            user = None
+            for key in user_keys_ordered:
+                raw = lower_item.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    user = _normalise_review_text(raw)
+                    break
+            date = None
+            for key in date_keys_ordered:
+                raw = lower_item.get(key)
+                if raw is not None and str(raw).strip():
+                    date = str(raw).strip()
+                    break
+            raw_id = (
+                lower_item.get("id") or lower_item.get("reviewid")
+                or lower_item.get("commentid") or ""
+            )
+            reviews.append({
+                "id": str(raw_id) if raw_id else "",
+                "text": text,
+                "rating": rating,
+                "date": date,
+                "user": user,
+                "source": "trendyol_reviews_api",
+            })
+
+        if reviews:
+            return reviews
+
+    return []
+
+
+def _normalise_review_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip()
+
+
+def _looks_like_ui_review_text(text: str, product_name: str | None = None) -> bool:
+    clean = _normalise_review_text(text)
+    low = clean.lower()
+    if len(clean) < 10:
+        return True
+    if product_name and clean[:100].lower() == product_name[:100].lower():
+        return True
+    ui_phrases = (
+        "değerlendirmeler", "yorumları göster", "daha fazla", "satıcıya sor",
+        "ürünü değerlendir", "yorum yaz", "sepete ekle", "tüm yorumlar",
+        "fotoğraflı yorum", "yardımcı oldu", "filtrele", "sırala",
+    )
+    if any(p in low for p in ui_phrases):
+        return True
+    pname = (product_name or "").lower()
+    cosmetic_product = any(k in pname for k in ("krem", "cream", "nemlendirici", "atoderm", "maskara", "serum", "tonik"))
+    if cosmetic_product and re.search(r"\b(xs|s beden|m beden|l beden|xl|boyum|kilom|beden|elbise|pantolon)\b", low):
+        return True
+    return False
+
+
+def _extract_first_number(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value)
+    match = re.search(r"\d+", text.replace(".", "").replace(",", ""))
+    return int(match.group(0)) if match else None
+
+
+def _collect_reviews_recursive(node, product_name: str | None = None) -> list[dict]:
+    text_keys = {
+        "text", "comment", "reviewtext", "content", "message", "commenttext", "review", "description",
+        "commentcontent", "reviewcomment", "userreviewcomment", "reviewbody", "body", "feedback",
+        "opinion", "commentbody",
+    }
+    rating_keys = {
+        "rating", "rate", "star", "score", "starcount", "ratingscore",
+        "commentrate", "starrating", "reviewrating", "commentrating", "userreviewrate",
+        "ratingvalue", "starvalue", "reviewrate",
+    }
+    user_keys = {"user", "username", "nickname", "customername", "userfullname", "displayname", "userdisplayname"}
+    date_keys = {"date", "createddate", "commentdate", "reviewdate", "userreviewdate", "lastmodifieddate"}
+    id_keys = {"id", "reviewid", "commentid"}
+    reviews: list[dict] = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            lower = {str(k).lower(): v for k, v in value.items()}
+            text = None
+            for key in text_keys:
+                raw = lower.get(key)
+                if isinstance(raw, str) and not _looks_like_ui_review_text(raw, product_name):
+                    text = _normalise_review_text(raw)
+                    break
+            if text:
+                rating = None
+                for key in rating_keys:
+                    n = _extract_first_number(lower.get(key))
+                    if n is not None and 1 <= n <= 5:
+                        rating = n
+                        break
+                user = None
+                for key in user_keys:
+                    raw = lower.get(key)
+                    if isinstance(raw, str) and raw.strip():
+                        user = _normalise_review_text(raw)
+                        break
+                date = None
+                for key in date_keys:
+                    raw = lower.get(key)
+                    if raw is not None and str(raw).strip():
+                        date = str(raw).strip()
+                        break
+                raw_id = None
+                for key in id_keys:
+                    raw = lower.get(key)
+                    if raw is not None and str(raw).strip():
+                        raw_id = str(raw).strip()
+                        break
+                reviews.append({
+                    "id": raw_id or "",
+                    "text": text,
+                    "rating": rating,
+                    "date": date,
+                    "user": user,
+                    "source": "trendyol_reviews_api",
+                })
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(node)
+    return reviews
+
+
+def _find_rating_distribution(node) -> dict | None:
+    found: dict[str, int] | None = None
+
+    def as_distribution(value) -> dict | None:
+        if not isinstance(value, dict):
+            return None
+        dist: dict[str, int] = {}
+        for key, raw in value.items():
+            key_text = str(key).lower()
+            star = _extract_first_number(key_text)
+            count = _extract_first_number(raw)
+            if star is not None and count is not None and 1 <= star <= 5:
+                dist[str(star)] = count
+        return dist if len(dist) >= 2 else None
+
+    def walk(value):
+        nonlocal found
+        if found is not None:
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_l = str(key).lower()
+                if any(token in key_l for token in ("distribution", "ratingcount", "starcount", "ratingsummary")):
+                    dist = as_distribution(child)
+                    if dist:
+                        found = dist
+                        return
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(node)
+    return found
+
+
+def _find_pagination_meta(node) -> dict:
+    meta: dict = {}
+
+    def maybe_set_from_dict(value: dict):
+        lower = {str(k).lower(): v for k, v in value.items()}
+        for key in ("totalcount", "total", "totalelements", "totalresults", "commentcount", "reviewcount"):
+            if key in lower and "totalCount" not in meta:
+                n = _extract_first_number(lower.get(key))
+                if n is not None:
+                    meta["totalCount"] = n
+        for key in ("totalpages", "totalpage", "pagecount"):
+            if key in lower and "totalPages" not in meta:
+                n = _extract_first_number(lower.get(key))
+                if n is not None:
+                    meta["totalPages"] = n
+        for key in ("currentpage", "page", "pagenumber", "number"):
+            if key in lower and "currentPage" not in meta:
+                n = _extract_first_number(lower.get(key))
+                if n is not None:
+                    meta["currentPage"] = n
+        for key in ("hasnextpage", "hasnext"):
+            if key in lower and "hasNextPage" not in meta:
+                meta["hasNextPage"] = bool(lower.get(key))
+        if "last" in lower and "hasNextPage" not in meta:
+            meta["hasNextPage"] = not bool(lower.get("last"))
+
+    def walk(value):
+        if isinstance(value, dict):
+            maybe_set_from_dict(value)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(node)
+    return meta
+
+
+def _dedupe_reviews(reviews: list[dict], product_name: str | None = None) -> list[dict]:
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for review in reviews:
+        text = _normalise_review_text(str(review.get("text") or ""))
+        if _looks_like_ui_review_text(text, product_name):
+            continue
+        key = str(review.get("id") or "") or text[:120].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        review["text"] = text
+        deduped.append(review)
+    return deduped
+
+
+def _parse_review_body(body: dict, product_name: str | None = None) -> tuple[list[dict], dict | None, dict]:
     """
     Parse one page of API response.
     Returns (review_objects, rating_distribution, pagination_meta).
@@ -255,93 +1039,14 @@ def _parse_review_body(body: dict) -> tuple[list[dict], dict | None, dict]:
       currentPage  – page index returned by the API
       hasNextPage  – bool hint from the API
     """
-    result_data = body.get("result") or body
-    comments_raw = (
-        result_data.get("comments")
-        or result_data.get("reviews")
-        or result_data.get("productReviews")
-        or body.get("comments")
-        or []
-    )
-    reviews: list[dict] = []
-    for c in (comments_raw or []):
-        text = (
-            c.get("text") or c.get("content") or
-            c.get("reviewText") or c.get("rvwTxt") or
-            c.get("comment") or ""
-        )
-        if not isinstance(text, str) or len(text.strip()) <= 5:
-            continue
-
-        raw_id = c.get("id") or c.get("reviewId") or c.get("commentId") or ""
-        raw_rating = (
-            c.get("rate") or c.get("rating") or c.get("star") or
-            c.get("starCount") or c.get("ratingScore")
-        )
-        raw_date = (
-            c.get("createdDate") or c.get("date") or c.get("reviewDate") or
-            c.get("userReviewDate") or c.get("lastModifiedDate")
-        )
-        raw_user = (
-            c.get("userFullName") or c.get("userName") or
-            c.get("displayName") or c.get("userDisplayName")
-        )
-
-        reviews.append({
-            "id": str(raw_id) if raw_id else "",
-            "text": text.strip(),
-            "rating": int(raw_rating) if raw_rating is not None else None,
-            "date": str(raw_date) if raw_date else None,
-            "user": str(raw_user) if raw_user else None,
-            "source": "trendyol_reviews_api",
-        })
-
-    dist_raw = (
-        (result_data.get("ratingScore") or {}).get("distribution")
-        or result_data.get("distribution")
-        or {}
-    )
-    rating_dist = (
-        {str(k): int(v) for k, v in dist_raw.items()}
-        if isinstance(dist_raw, dict) and len(dist_raw) >= 2 else None
-    )
-
-    # ── Pagination metadata ───────────────────────────────────────────────────
-    pagination: dict = {}
-    for field in ("totalCount", "total", "totalElements", "totalResults", "commentCount"):
-        val = result_data.get(field)
-        if val is not None:
-            try:
-                pagination["totalCount"] = int(val)
-            except (TypeError, ValueError):
-                pass
-            break
-
-    for field in ("totalPages", "totalPage", "pageCount"):
-        val = result_data.get(field)
-        if val is not None:
-            try:
-                pagination["totalPages"] = int(val)
-            except (TypeError, ValueError):
-                pass
-            break
-
-    for field in ("currentPage", "page", "pageNumber"):
-        val = result_data.get(field)
-        if val is not None:
-            try:
-                pagination["currentPage"] = int(val)
-            except (TypeError, ValueError):
-                pass
-            break
-
-    # hasNextPage: some APIs return explicit boolean, others infer from last=false
-    has_next = result_data.get("hasNextPage") or result_data.get("hasNext")
-    last_page = result_data.get("last")  # Spring-style: last=true means final page
-    if has_next is not None:
-        pagination["hasNextPage"] = bool(has_next)
-    elif last_page is not None:
-        pagination["hasNextPage"] = not bool(last_page)
+    # Try known Trendyol structures first (faster + more precise key matching)
+    known = _try_known_trendyol_structures(body, product_name)
+    if known:
+        reviews = _dedupe_reviews(known, product_name)
+    else:
+        reviews = _dedupe_reviews(_collect_reviews_recursive(body, product_name), product_name)
+    rating_dist = _find_rating_distribution(body)
+    pagination = _find_pagination_meta(body)
 
     return reviews, rating_dist, pagination
 
@@ -349,32 +1054,69 @@ def _parse_review_body(body: dict) -> tuple[list[dict], dict | None, dict]:
 def _setup_request_capture(page) -> list[str]:
     captured: list[str] = []
 
-    def _on_request(request) -> None:
-        url = request.url
-        if not any(kw in url for kw in ["rating", "review", "comment", "degerlendirme"]):
+    def _capture(url: str, source: str) -> None:
+        low = url.lower()
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if not (
+            host == "apigw.trendyol.com"
+            or "discovery-storefront" in low
+            or "review-read" in path
+            or "product-reviews" in path
+            or "comments" in path
+        ):
             return
-        if not any(d in url for d in ["trendyol.com", "public.", "public-mdc", "public-sdc"]):
+        if not any(key in low for key in ("review-read", "product-reviews", "comments", "comment")):
             return
         if url not in captured:
             captured.append(url)
-            print(f"[REVIEWS] intercepted request url={url}")
+            print(f"[REVIEWS] intercepted {source} url={url}")
+
+    def _on_request(request) -> None:
+        _capture(request.url, "request")
+
+    def _on_response(response) -> None:
+        _capture(response.url, "response")
 
     page.on("request", _on_request)
+    page.on("response", _on_response)
     return captured
 
 
-def _strip_page_params(url: str) -> str:
-    url = re.sub(r"[&?]page=\d+", "", url)
-    url = re.sub(r"[&?]size=\d+", "", url)
-    url = re.sub(r"[&?]pageSize=\d+", "", url)
-    if "?" not in url and "&" in url:
-        url = url.replace("&", "?", 1)
-    return url
+def _is_review_endpoint(url: str) -> bool:
+    low = url.lower()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    allowed_host = host == "apigw.trendyol.com" or "trendyol.com" in host
+    allowed_path = any(key in path for key in ("product-reviews", "review-read", "comments", "comment"))
+    return allowed_host and allowed_path
+
+
+def _normalise_review_endpoint(url: str, size: int = _PAGE_SIZE) -> str:
+    parsed = urlparse(url)
+    params = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+              if k.lower() not in {"page", "size", "pagesize"}]
+    params.append(("page", "0"))
+    if "product-reviews" in parsed.path.lower() or "review-read" in parsed.path.lower():
+        params.append(("pageSize", str(size)))
+    else:
+        params.append(("size", str(size)))
+    query = urlencode(params, doseq=True)
+    return urlunparse(parsed._replace(query=query))
 
 
 def _build_page_url(base_url: str, page_num: int, size: int) -> str:
-    sep = "&" if "?" in base_url else "?"
-    return f"{base_url}{sep}page={page_num}&size={size}"
+    parsed = urlparse(base_url)
+    params = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+              if k.lower() not in {"page", "size", "pagesize"}]
+    params.append(("page", str(page_num)))
+    if "product-reviews" in parsed.path.lower() or "review-read" in parsed.path.lower():
+        params.append(("pageSize", str(size)))
+    else:
+        params.append(("size", str(size)))
+    return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
 
 
 async def _refetch_with_status(page, url: str) -> tuple[dict | None, int]:
@@ -406,6 +1148,8 @@ async def _fetch_all_pages(
     base_url: str,
     review_count: int | None,
     max_reviews: int,
+    product_name: str | None = None,
+    page_size: int | None = None,
 ) -> tuple[list[dict], dict | None, bool, str, int | None]:
     """
     Paginate from page=0, collecting review objects until max_reviews or no more data.
@@ -436,21 +1180,7 @@ async def _fetch_all_pages(
         print(f"[REVIEWS] reviewCount={review_count}")
     print(f"[REVIEWS] maxReviews={max_reviews}")
 
-    # ── Probe for larger page size (100) ────────────────────────────────────
-    actual_page_size = _PAGE_SIZE
-    probe_url_100 = _build_page_url(base_url, 0, 100)
-    probe_body_100, probe_status_100 = await _refetch_with_status(page, probe_url_100)
-    if probe_status_100 == 200 and probe_body_100:
-        probe_reviews_100, _, probe_meta_100 = _parse_review_body(probe_body_100)
-        if len(probe_reviews_100) > _PAGE_SIZE:
-            actual_page_size = 100
-            print(f"[REVIEWS] pageSize=100 supported, switching")
-        if probe_meta_100.get("totalCount") is not None:
-            api_total_count = probe_meta_100["totalCount"]
-        if probe_meta_100.get("totalPages") is not None:
-            api_total_pages = probe_meta_100["totalPages"]
-        if api_total_count:
-            print(f"[REVIEWS] API totalCount={api_total_count} totalPages={api_total_pages}")
+    actual_page_size = page_size or _PAGE_SIZE
 
     page_num = 0
     consecutive_empty = 0
@@ -469,8 +1199,10 @@ async def _fetch_all_pages(
             reason = "empty_response"
             break
 
-        page_reviews, page_dist, page_meta = _parse_review_body(body)
+        page_reviews, page_dist, page_meta = _parse_review_body(body, product_name)
         loaded_this_page = len(page_reviews)
+        if loaded_this_page == 0:
+            _debug_json_parse_failure(body, product_name)
 
         # Update pagination metadata from first page that has it
         if page_meta.get("totalCount") is not None and api_total_count is None:
@@ -518,6 +1250,8 @@ async def _fetch_all_pages(
                 seen.add(dedup_key)
                 all_reviews.append(r)
                 added += 1
+                if len(all_reviews) >= target:
+                    break
 
         if added == 0:
             # All items were duplicates — API is looping (hidden pagination ceiling)
@@ -570,7 +1304,7 @@ async def _fetch_all_pages(
 
 async def _find_working_endpoint(page, product_id: str) -> str | None:
     for template in _ENDPOINT_TEMPLATES:
-        base_url = template.format(pid=product_id)
+        base_url = _normalise_review_endpoint(template.format(pid=product_id), _PAGE_SIZE)
         probe_url = _build_page_url(base_url, 0, _PAGE_SIZE)
         print(f"[REVIEWS] endpoint tried={probe_url}")
         body, status = await _refetch_with_status(page, probe_url)
@@ -672,6 +1406,8 @@ async def _extract_reviews_trendyol(
     product_id: str | None,
     review_count: int | None,
     max_reviews: int,
+    product_name: str | None = None,
+    embedded_objects: list[tuple[str, object]] | None = None,
 ) -> tuple[list[dict], dict | None, str, bool, str, int | None]:
     """
     Master review extractor with full pagination.
@@ -681,16 +1417,31 @@ async def _extract_reviews_trendyol(
     print(f"[REVIEWS] intercepted {len(captured_urls)} candidate URLs")
 
     # ── Strategy 1: intercepted URLs → strip page params → paginate ─────────
-    for captured in captured_urls[:5]:
-        base_url = _strip_page_params(captured)
-        probe_url = _build_page_url(base_url, 0, _PAGE_SIZE)
+    review_urls = [u for u in captured_urls if _is_review_endpoint(u)]
+    review_urls = sorted(
+        dict.fromkeys(review_urls),
+        key=lambda u: (
+            0 if "review-read" in u.lower() or "product-reviews" in u.lower() else 1,
+            1 if "pagesize=5" in u.lower() or "size=5" in u.lower() else 0,
+            len(u),
+        ),
+    )
+
+    for captured in review_urls[:8]:
+        # Use pageSize=20 for "detailed" endpoints; they may not support higher values
+        is_detailed = "detailed" in captured.lower()
+        ep_page_size = 20 if is_detailed else _PAGE_SIZE
+        base_url = _normalise_review_endpoint(captured, ep_page_size)
+        probe_url = _build_page_url(base_url, 0, ep_page_size)
         body, status = await _refetch_with_status(page, probe_url)
         if status == 200 and body:
-            probe_reviews, _, _ = _parse_review_body(body)
+            probe_reviews, _, _ = _parse_review_body(body, product_name)
+            if not probe_reviews:
+                _debug_json_parse_failure(body, product_name)
             if probe_reviews:
                 print(f"[REVIEWS] using intercepted base_url={base_url[:80]}")
                 reviews, dist, completed, reason, api_total = await _fetch_all_pages(
-                    page, base_url, review_count, max_reviews
+                    page, base_url, review_count, max_reviews, product_name, ep_page_size
                 )
                 if reviews:
                     reviews = await _supplement_negative_reviews(page, base_url, reviews, dist, max_reviews)
@@ -702,14 +1453,20 @@ async def _extract_reviews_trendyol(
         base_url = await _find_working_endpoint(page, product_id)
         if base_url:
             reviews, dist, completed, reason, api_total = await _fetch_all_pages(
-                page, base_url, review_count, max_reviews
+                page, base_url, review_count, max_reviews, product_name
             )
             if reviews:
                 reviews = await _supplement_negative_reviews(page, base_url, reviews, dist, max_reviews)
                 source = "api_rate_limited" if reason == "rate_limited" else "trendyol_reviews_api"
                 return reviews, dist, source, completed, reason, api_total
 
-    # ── Strategy 3: DOM fallback (single page, no pagination) ────────────────
+    # ── Strategy 3: embedded/source JSON fallback ───────────────────────────
+    if embedded_objects:
+        embedded_reviews, embedded_dist, embedded_source = _extract_embedded_reviews(embedded_objects, product_name)
+        if embedded_reviews:
+            return embedded_reviews[:max_reviews], embedded_dist, embedded_source, False, "embedded_json_fallback", None
+
+    # ── Strategy 4: DOM fallback (single page, no pagination) ────────────────
     tab_selectors = [
         'button:has-text("Değerlendirmeler")',
         'a:has-text("Değerlendirmeler")',
@@ -802,6 +1559,12 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
     path_segments = [seg for seg in parsed_url.path.strip("/").split("/") if seg]
 
     effective_max_reviews = max_reviews if max_reviews is not None else _MAX_REVIEWS
+    product_id = _extract_product_id(url)
+    debug: dict = {
+        "productIdMissing": product_id is None,
+        "priceCandidates": [],
+        "reviewEndpointCandidates": [],
+    }
 
     product_name = None
     brand = None
@@ -815,6 +1578,8 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
     slug_keywords = []
     reviews: list[dict] = []
     rating_distribution: dict | None = None
+    jsonld_price = None
+    meta_price = None
 
     data_source = {
         "productName": "fallback",
@@ -837,6 +1602,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
 
     reviews_completed = False
     reviews_reason = "not_started"
+    reviews_api_total = None
 
     try:
         async with async_playwright() as p:
@@ -872,14 +1638,17 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
             captured_urls = _setup_request_capture(page)
 
             try:
-                await page.goto(url, wait_until="networkidle", timeout=45000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
             except Exception:
                 try:
                     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 except Exception as e:
                     print(f"[scraper] Page load error: {e}")
 
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2500)
+            html = await page.content()
+            embedded_objects = _extract_embedded_json_objects(html)
+            debug["embeddedJsonSources"] = [source for source, _ in embedded_objects[:20]]
 
             # ── 1. JSON-LD ─────────────────────────────────────────────────
             try:
@@ -887,10 +1656,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                     try:
                         raw = await el.inner_text()
                         data = json.loads(raw)
-                        items = data if isinstance(data, list) else [data]
-                        for item in items:
-                            if item.get("@type") not in ("Product", "product"):
-                                continue
+                        for item in _iter_jsonld_products(data):
                             if not product_name and item.get("name"):
                                 product_name = item["name"].strip()
                                 data_source["productName"] = "jsonld"
@@ -910,6 +1676,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                             if isinstance(offers, list):
                                 offers = offers[0] if offers else {}
                             if not price and offers.get("price"):
+                                jsonld_price = str(offers["price"])
                                 price = format_price_turkish(offers["price"])
                                 data_source["price"] = "jsonld"
                             agg = item.get("aggregateRating") or {}
@@ -936,7 +1703,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                             product_name = c.strip()
                             data_source["productName"] = "meta"
 
-                if not image:
+                if not image or data_source["image"] in {"jsonld", "fallback"}:
                     for sel in [
                         'meta[property="og:image"]',
                         'meta[name="twitter:image"]',
@@ -951,13 +1718,31 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                                 data_source["image"] = "meta"
                                 break
 
-                if not price:
+                if not price or data_source["price"] in {"fallback"}:
                     el = await page.query_selector('meta[property="product:price:amount"]')
                     if el:
                         c = await el.get_attribute("content")
                         if c:
+                            meta_price = c.strip()
                             price = format_price_turkish(c.strip())
                             data_source["price"] = "meta"
+
+                if not rating:
+                    for sel in [
+                        'meta[itemprop="ratingValue"]',
+                        'meta[property="product:rating"]',
+                        'meta[name="rating"]',
+                    ]:
+                        el = await page.query_selector(sel)
+                        if el:
+                            c = await el.get_attribute("content")
+                            if c:
+                                try:
+                                    rating = float(str(c).replace(",", "."))
+                                    data_source["rating"] = "meta"
+                                    break
+                                except ValueError:
+                                    pass
             except Exception:
                 pass
 
@@ -987,26 +1772,21 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                     except Exception:
                         continue
 
-            if not price or data_source["price"] == "fallback":
-                for sel in [
-                    ".prc-dsc",
-                    ".prc-slg",
-                    ".product-price-container",
-                    '[data-testid*="price"]',
-                    ".pr-bx-nm",
-                    ".prc-box-dscntd",
-                ]:
-                    try:
-                        el = await page.query_selector(sel)
-                        if el:
-                            p_text = (await el.inner_text()).strip()
-                            if p_text:
-                                clean = p_text.replace(" TL", "").replace("₺", "").strip()
-                                price = format_price_turkish(clean)
-                                data_source["price"] = "dom"
-                                break
-                    except Exception:
-                        continue
+            embedded_price_candidates = _extract_json_price_candidates(embedded_objects, product_id)
+            price_candidates = embedded_price_candidates + await extract_price_candidates(page, jsonld_price, meta_price)
+            price_candidates.sort(key=lambda c: c.get("confidence", 0), reverse=True)
+            debug["priceCandidates"] = price_candidates[:8]
+            print(f"[PRICE CANDIDATES FULL] {json.dumps(price_candidates[:12], ensure_ascii=False)}")
+            selected_price, selected_price_source = _select_price_candidate(price_candidates)
+            if selected_price:
+                price = selected_price
+                if selected_price_source in {"jsonld_offers", "meta_product_price"}:
+                    data_source["price"] = "jsonld" if selected_price_source == "jsonld_offers" else "meta"
+                elif str(selected_price_source).startswith("embedded_json"):
+                    data_source["price"] = "embedded"
+                else:
+                    data_source["price"] = "dom"
+                debug["priceSourceDetail"] = selected_price_source
 
             if not image or data_source["image"] == "fallback":
                 img_selectors = [
@@ -1043,6 +1823,8 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                 if js_img:
                     image = js_img
                     data_source["image"] = "js"
+            print(f"[IMAGE] selected={image}")
+            print(f"[IMAGE] source={data_source.get('image')}")
 
             if not rating or data_source["rating"] == "fallback":
                 for sel in [".rating-score", ".ratings", '[class*="rating"]', ".ratingScore"]:
@@ -1065,7 +1847,15 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                     data_source["rating"] = "js"
 
             if not review_count or data_source["reviewCount"] == "fallback":
+                embedded_review_count, embedded_count_source = _extract_json_review_count(embedded_objects, product_id)
+                if embedded_review_count is not None:
+                    review_count = embedded_review_count
+                    data_source["reviewCount"] = embedded_count_source or "embedded"
+
+            if not review_count or data_source["reviewCount"] == "fallback":
                 for sel in [
+                    ".reviews-summary-reviews-detail",
+                    ".reviews-summary-reviews-summary .reviews-summary-reviews-detail",
                     ".rating-line-count",
                     ".rvw-cnt-tx",
                     ".reviewCount",
@@ -1093,7 +1883,14 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                     data_source["reviewCount"] = "js"
 
             if not question_count or data_source["questionCount"] == "fallback":
+                embedded_q_count, embedded_q_source = _extract_json_question_count(embedded_objects, product_id)
+                if embedded_q_count is not None:
+                    question_count = embedded_q_count
+                    data_source["questionCount"] = embedded_q_source or "embedded"
+
+            if not question_count or data_source["questionCount"] == "fallback":
                 for sel in [
+                    ".questions-summary-questions-summary",
                     '[data-testid*="question"]',
                     '[class*="question-count"]',
                     '[class*="answered-question"]',
@@ -1123,9 +1920,6 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
             except Exception:
                 pass
 
-            question_count = None
-            data_source["questionCount"] = "fallback"
-
             try:
                 crumbs = await page.query_selector_all(".breadcrumb-item")
                 if crumbs:
@@ -1134,27 +1928,34 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
             except Exception:
                 pass
 
+            product_name_l = (product_name or "").lower()
+            if "maskara" in product_name_l or "mascara" in product_name_l:
+                category = "Kozmetik / Makyaj / Göz Makyajı"
+            elif any(k in product_name_l for k in ("nemlendirici", "atoderm", "cream", "krem")):
+                category = "Kozmetik / Cilt Bakımı / Nemlendirici Krem"
+
             # ── 4. Reviews ─────────────────────────────────────────────────
-            product_id = _extract_product_id(url)
-            (
-                reviews, rating_distribution, reviews_source,
-                reviews_completed, reviews_reason, reviews_api_total,
-            ) = await _extract_reviews_trendyol(
-                page, captured_urls, product_id, review_count, effective_max_reviews
-            )
-            data_source["reviews"] = reviews_source
+            if effective_max_reviews > 0:
+                debug["reviewEndpointCandidates"] = captured_urls[:12]
+                (
+                    reviews, rating_distribution, reviews_source,
+                    reviews_completed, reviews_reason, reviews_api_total,
+                ) = await _extract_reviews_trendyol(
+                    page, captured_urls, product_id, review_count, effective_max_reviews, product_name, embedded_objects
+                )
+                data_source["reviews"] = reviews_source
+                if review_count is None and reviews_api_total is not None:
+                    review_count = reviews_api_total
+                    data_source["reviewCount"] = "review_api_total"
+            else:
+                reviews_reason = "not_requested"
+                data_source["reviews"] = "none"
 
             # ── 5. Full body regex (last resort for product data) ───────────
-            needs_body = not price or not rating or not image
+            needs_body = not rating
             if needs_body:
                 try:
                     body_text = await page.inner_text("body")
-
-                    if not price or data_source["price"] == "fallback":
-                        m = re.search(r"([\d]{1,3}(?:\.[\d]{3})*,\d{2})\s*TL", body_text)
-                        if m:
-                            price = m.group(1) + " TL"
-                            data_source["price"] = "regex"
 
                     if not rating or data_source["rating"] == "fallback":
                         m = re.search(r"\b([1-5][.,][0-9])\b", body_text)
@@ -1165,12 +1966,15 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
                 except Exception:
                     pass
 
-            if data_source.get("reviewCount") in {"regex", "body_regex", "fallback"}:
+            _UNRELIABLE_COUNT_SOURCES = {"regex", "body_regex", "fallback", "dom", "js"}
+            if data_source.get("reviewCount") in _UNRELIABLE_COUNT_SOURCES:
                 if review_count is not None:
                     print(f"[COUNT SOURCE] rejected reviewCount={review_count} source={data_source.get('reviewCount')}")
                 review_count = None
                 data_source["reviewCount"] = "fallback"
-            if data_source.get("questionCount") in {"regex", "body_regex", "fallback"}:
+            if data_source.get("questionCount") in _UNRELIABLE_COUNT_SOURCES:
+                if question_count is not None:
+                    print(f"[COUNT SOURCE] rejected questionCount={question_count} source={data_source.get('questionCount')}")
                 question_count = None
                 data_source["questionCount"] = "fallback"
 
@@ -1188,6 +1992,26 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
         print(f"[scraper] Playwright execution error: {e}")
 
     reviews_loaded = len(reviews)
+
+    # Data validation: if reviewCount is from an unreliable source and reviews couldn't be loaded,
+    # null it to avoid showing wrong numbers
+    _reliable_count_sources = {"review_api_total", "jsonld", "embedded"}
+    if (review_count is not None and review_count > 0 and reviews_loaded == 0
+            and data_source.get("reviewCount") not in _reliable_count_sources):
+        print(
+            f"[REVIEWS WARNING] reviewCount={review_count} source={data_source.get('reviewCount')} "
+            f"but reviewsLoaded=0 — nulling unreliable count"
+        )
+        review_count = None
+        data_source["reviewCount"] = "fallback"
+
+    # Confidence assessment
+    if reviews_loaded > 0:
+        review_confidence = "OK"
+    elif review_count and review_count > 0:
+        review_confidence = "REVIEW_TEXT_MISSING"
+    else:
+        review_confidence = "NO_REVIEWS"
 
     # Transparent warning for platform-capped pagination
     if reviews_reason in ("platform_limit_reached", "pagination_incomplete"):
@@ -1207,6 +2031,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
         "maxReviews": effective_max_reviews,
         "source": data_source.get("reviews", "none"),
         "reason": reviews_reason,
+        "confidence": review_confidence,
         "starDistribution": review_analytics["starDistribution"],
         "loadedByStar": review_analytics["loadedByStar"],
         "sampleReviews": review_analytics["sampleReviews"],
@@ -1221,6 +2046,7 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
     return {
         "sourceUrl": url,
         "sourcePlatform": "Trendyol" if "trendyol" in domain else "Web",
+        "productId": product_id,
         "productName": product_name,
         "brand": brand,
         "category": category,
@@ -1237,4 +2063,5 @@ async def scrape_trendyol_product(url: str, max_reviews: int | None = None) -> d
         "reviewsSource": data_source.get("reviews", "none"),
         "ratingDistribution": rating_distribution,
         "reviewStats": review_stats,
+        "debug": debug,
     }

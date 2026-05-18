@@ -76,7 +76,7 @@ async def generate_analysis(url: str, include_reviews: bool = False):
         raise ValueError(UNSUPPORTED_SITE_ERROR)
 
     try:
-        extracted_data = await scrape_product(url)
+        extracted_data = await scrape_product(url, max_reviews=1000 if include_reviews else None)
     except Exception as e:
         print("[ANALYZE] scrape_product raised exception:")
         traceback.print_exc()
