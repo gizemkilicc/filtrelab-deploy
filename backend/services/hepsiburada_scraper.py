@@ -17,6 +17,7 @@ import traceback
 import asyncio
 
 from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
 _MAX_REVIEWS = int(os.getenv("MAX_REVIEWS", "1000"))
 _HB_PAGE_SIZE = 50
@@ -767,6 +768,68 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
 
             except Exception:
                 pass
+
+            # ── 8. HTML fallback: image (BeautifulSoup) + reviews (embedded JSON) ──
+            try:
+                html_content = await page.content()
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                # Image fallback — JSON-LD/meta/DOM/JS above all missed it
+                if not image:
+                    og = soup.find("meta", attrs={"property": "og:image"})
+                    if og and str(og.get("content", "")).startswith("http"):
+                        image = og["content"].strip()
+                        data_source["image"] = "html"
+                    else:
+                        for img in soup.find_all("img"):
+                            src = (img.get("src") or img.get("data-src") or "").strip()
+                            if src.startswith("http") and not any(
+                                b in src.lower()
+                                for b in ("logo", "icon", "placeholder", "sprite", "svg")
+                            ):
+                                image = src
+                                data_source["image"] = "html"
+                                break
+
+                # Reliable reviewCount from embedded JSON ("customerReviewCount")
+                if not review_count or data_source.get("reviewCount") in ("regex", None):
+                    rc_m = re.search(r'"customerReviewCount":(\d+)', html_content)
+                    if rc_m:
+                        review_count = int(rc_m.group(1))
+                        data_source["reviewCount"] = "html_json"
+
+                # Reviews live in embedded page JSON: "review":{"content":"..."},"star":N
+                # (Hepsiburada renders review cards with hashed CSS classes, so the
+                #  JSON is far more stable than any selector.)
+                reviews_before = len(reviews)
+                existing = {r["text"][:80] for r in reviews if r.get("text")}
+                merged = 0
+                for m in re.finditer(
+                    r'"review":\{"content":"((?:[^"\\]|\\.)*)"\}(?:,"star":(\d+))?',
+                    html_content,
+                ):
+                    try:
+                        text = json.loads('"' + m.group(1) + '"').strip()
+                    except Exception:
+                        continue
+                    if len(text) <= 10 or text[:80] in existing:
+                        continue
+                    existing.add(text[:80])
+                    reviews.append({
+                        "id": "",
+                        "text": text[:500],
+                        "rating": int(m.group(2)) if m.group(2) else None,
+                        "date": None,
+                        "user": None,
+                        "source": "hepsiburada_html",
+                    })
+                    merged += 1
+                print(f"[hepsiburada] html_reviews_merged={merged} (total={len(reviews)})")
+                if merged and reviews_before == 0:
+                    data_source["reviews"] = "html"
+                    reviews_reason = "html_fallback"
+            except Exception as e:
+                print(f"[hepsiburada] HTML fallback error: {e}")
 
             print(
                 f"[hepsiburada] name={product_name!r} brand={brand!r} "

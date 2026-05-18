@@ -14,7 +14,7 @@ import { AnimatedCard } from "@/components/ui/AnimatedCard";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { FinalVerdict } from "@/components/ui/FinalVerdict";
 import { ScanTimeline } from "@/components/ui/ScanTimeline";
-import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Bell, Heart } from "lucide-react";
+import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Bell, Heart, Loader2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -61,6 +61,7 @@ function DashboardContent() {
     { id: 4, message: "Fiyat karşılaştırması", status: "pending" },
     { id: 5, message: "AI karar oluşturuyor", status: "pending" },
   ]);
+  const isWaitingForResult = timelineSteps.every((step) => step.status === "completed");
   
   useEffect(() => {
     let mounted = true;
@@ -127,6 +128,16 @@ function DashboardContent() {
             <p className="text-gray-700 dark:text-gray-300">Bu ürün için binlerce veri noktası analiz ediliyor...</p>
           </div>
           <ScanTimeline steps={timelineSteps} />
+          {isWaitingForResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-10 flex items-center justify-center gap-3 text-sm font-semibold text-gray-600 dark:text-gray-300"
+            >
+              <Loader2 className="h-5 w-5 animate-spin text-[var(--neon-blue)]" />
+              <span>Yükleniyor, sonuç sayfası hazırlanıyor...</span>
+            </motion.div>
+          )}
         </motion.div>
       </div>
     );

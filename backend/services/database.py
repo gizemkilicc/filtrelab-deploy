@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -13,7 +13,9 @@ if not DATABASE_URL:
         "backend/.env dosyasına DATABASE_URL=postgresql://user:pass@localhost:5432/filterlab ekleyin."
     )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+# SQLite needs check_same_thread=False to work with FastAPI's threaded requests
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -83,7 +85,8 @@ class AnalysisHistory(Base):
     fake_review_risk = Column(Float, nullable=True)
     sentiment_score = Column(Float, nullable=True)
     price_performance = Column(Float, nullable=True)
-    raw_result = Column(JSONB, nullable=True)
+    # JSONB on PostgreSQL, generic JSON on SQLite/others — no production regression
+    raw_result = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

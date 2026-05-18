@@ -1,3 +1,11 @@
+import sys
+import asyncio
+
+# Windows: Playwright launches the browser as a subprocess, which only works on
+# the ProactorEventLoop. This must run before uvicorn creates the event loop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -53,4 +61,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # reload=False so this process keeps the ProactorEventLoop policy set above.
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

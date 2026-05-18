@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,8 +12,11 @@ import {
   Heart,
   History,
   Loader2,
+  Package,
   Search,
+  ShoppingCart,
   Sparkles,
+  Star,
   TrendingDown,
 } from "lucide-react";
 import {
@@ -67,69 +70,108 @@ const featureCards = [
   },
 ];
 
-const categoryOrbits = [
-  { label: "Kadın", x: "50%", y: "13%", delay: 0 },
-  { label: "Erkek", x: "73%", y: "22%", delay: 0.2 },
-  { label: "Çocuk", x: "82%", y: "47%", delay: 0.4 },
-  { label: "Ev & Yaşam", x: "66%", y: "72%", delay: 0.6 },
-  { label: "Kozmetik", x: "39%", y: "80%", delay: 0.8 },
-  { label: "Ayakkabı & Çanta", x: "17%", y: "61%", delay: 1 },
-  { label: "Elektronik", x: "18%", y: "32%", delay: 1.2 },
-  { label: "Aksesuar", x: "42%", y: "43%", delay: 1.4 },
-  { label: "Spor", x: "56%", y: "57%", delay: 1.6 },
+const shoppingStreamItems = [
+  { Icon: Package, delay: 0, color: "text-sky-500", bg: "bg-sky-100/90 dark:bg-sky-400/15" },
+  { Icon: Heart, delay: 1.1, color: "text-rose-500", bg: "bg-rose-100/90 dark:bg-rose-400/15" },
+  { Icon: Star, delay: 2.2, color: "text-amber-500", bg: "bg-amber-100/90 dark:bg-amber-400/15" },
+  { Icon: Package, delay: 3.3, color: "text-violet-500", bg: "bg-violet-100/90 dark:bg-violet-400/15" },
+  { Icon: Heart, delay: 4.4, color: "text-fuchsia-500", bg: "bg-fuchsia-100/90 dark:bg-fuchsia-400/15" },
+  { Icon: Star, delay: 5.5, color: "text-cyan-500", bg: "bg-cyan-100/90 dark:bg-cyan-400/15" },
 ];
 
 function CategorySpiral() {
-  return (
-    <div className="relative min-h-[360px] overflow-hidden rounded-[2.5rem] border border-white/60 bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.72),rgba(216,180,254,0.26)_34%,rgba(124,58,237,0.22)_70%,rgba(14,165,233,0.16))] p-6 shadow-[0_28px_90px_rgba(91,33,182,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.12),rgba(124,58,237,0.28)_34%,rgba(49,46,129,0.38)_70%,rgba(5,5,10,0.7))]">
-      <motion.div
-        aria-hidden="true"
-        className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#191847]/18 dark:border-white/15"
-        animate={{ rotate: 360 }}
-        transition={{ duration: 22, repeat: Infinity, ease: "linear" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#191847]/18 dark:border-white/15"
-        animate={{ rotate: -360 }}
-        transition={{ duration: 18, repeat: Infinity, ease: "linear" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#191847]/18 dark:border-white/15"
-        animate={{ rotate: 360 }}
-        transition={{ duration: 14, repeat: Infinity, ease: "linear" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute left-[49%] top-[43%] h-20 w-20 rounded-full bg-[radial-gradient(circle_at_30%_30%,#fff,#67e8f9_28%,#a855f7_62%,#191847)] shadow-[0_18px_50px_rgba(124,58,237,0.45)]"
-        animate={{ y: [0, -10, 0], scale: [1, 1.05, 1] }}
-        transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute left-[7%] top-[12%] h-20 w-20 rounded-full bg-[radial-gradient(circle_at_30%_30%,#fff,#f0abfc_26%,#38bdf8_66%,#7c3aed)]"
-        animate={{ y: [0, 16, 0], x: [0, 8, 0] }}
-        transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        aria-hidden="true"
-        className="absolute bottom-8 right-10 h-16 w-16 rounded-full bg-[radial-gradient(circle_at_30%_30%,#fff,#22d3ee_25%,#f472b6_62%,#7c3aed)]"
-        animate={{ y: [0, -18, 0], x: [0, -10, 0] }}
-        transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-      />
+  const pathRef = useRef<SVGPathElement>(null);
+  // Spiral sampled into equal-length points (% of the 1440×760 viewBox).
+  // The final point is the cart, so items ride the line straight into it.
+  const [ride, setRide] = useState<{ x: number; y: number }[]>([]);
 
-      {categoryOrbits.map((category) => (
-        <motion.div
-          key={category.label}
-          className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-white/70 bg-white/80 px-3 py-1.5 text-xs font-black text-[#191847] shadow-[0_12px_32px_rgba(25,24,71,0.12)] backdrop-blur-md dark:border-white/10 dark:bg-white/10 dark:text-white"
-          style={{ left: category.x, top: category.y }}
-          animate={{ y: [0, -8, 0], x: [0, 4, 0] }}
-          transition={{ duration: 4.2, delay: category.delay, repeat: Infinity, ease: "easeInOut" }}
-        >
-          {category.label}
-        </motion.div>
-      ))}
+  useEffect(() => {
+    const path = pathRef.current;
+    if (!path) return;
+    const total = path.getTotalLength();
+    if (!total) return;
+    const SAMPLES = 28;
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= SAMPLES; i += 1) {
+      const p = path.getPointAtLength((total * i) / SAMPLES);
+      pts.push({ x: (p.x / 1440) * 100, y: (p.y / 760) * 100 });
+    }
+    pts.push({ x: 86, y: 24 }); // cart centre — items drop in here
+    setRide(pts);
+  }, []);
+
+  return (
+    <div className="pointer-events-none absolute inset-x-[-8%] top-28 z-0 h-[560px] overflow-hidden opacity-95 md:top-20 md:h-[720px] lg:inset-x-[-4%] lg:h-[780px]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_55%_42%,rgba(255,255,255,0.55),rgba(216,180,254,0.18)_34%,rgba(124,58,237,0.18)_70%,transparent)] dark:bg-[radial-gradient(circle_at_55%_42%,rgba(255,255,255,0.08),rgba(124,58,237,0.22)_34%,rgba(49,46,129,0.24)_70%,transparent)]" />
+      <svg
+        className="absolute inset-0 h-full w-full"
+        viewBox="0 0 1440 760"
+        fill="none"
+        aria-hidden="true"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id="categorySpiralGradient" x1="96" y1="440" x2="1340" y2="190" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#38bdf8" stopOpacity="0.28" />
+            <stop offset="0.38" stopColor="#a78bfa" stopOpacity="0.7" />
+            <stop offset="0.72" stopColor="#f0abfc" stopOpacity="0.62" />
+            <stop offset="1" stopColor="#22d3ee" stopOpacity="0.34" />
+          </linearGradient>
+          <filter id="categorySpiralGlow" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="14" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <motion.path
+          ref={pathRef}
+          d="M80 420 C190 150 385 150 470 330 C544 488 338 560 318 365 C294 130 615 110 720 325 C826 542 548 610 542 346 C536 82 912 76 1010 318 C1112 568 895 644 806 470 C710 282 930 140 1360 178"
+          stroke="rgba(255,255,255,0.68)"
+          strokeWidth="42"
+          strokeLinecap="round"
+          filter="url(#categorySpiralGlow)"
+        />
+        <motion.path
+          d="M80 420 C190 150 385 150 470 330 C544 488 338 560 318 365 C294 130 615 110 720 325 C826 542 548 610 542 346 C536 82 912 76 1010 318 C1112 568 895 644 806 470 C710 282 930 140 1360 178"
+          stroke="url(#categorySpiralGradient)"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray="26 18"
+          animate={{ strokeDashoffset: [0, -88] }}
+          transition={{ duration: 6.5, repeat: Infinity, ease: "linear" }}
+        />
+      </svg>
+
+      <motion.div
+        className="absolute right-[7%] top-[18%] grid h-28 w-28 place-items-center rounded-[2rem] border border-white/70 bg-white/72 text-[#191847] shadow-[0_26px_70px_rgba(25,24,71,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-white/10 dark:text-white md:h-36 md:w-36"
+        animate={{ scale: [1, 1.04, 1], y: [0, -6, 0] }}
+        transition={{ duration: 3.8, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <div className="absolute inset-3 rounded-[1.5rem] bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.85),rgba(125,211,252,0.22),rgba(168,85,247,0.18))] dark:bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.18),rgba(125,211,252,0.12),rgba(168,85,247,0.18))]" />
+        <ShoppingCart className="relative h-14 w-14 drop-shadow-[0_12px_24px_rgba(25,24,71,0.18)] md:h-20 md:w-20" strokeWidth={1.4} />
+      </motion.div>
+
+      {/* Heart / star / box icons travelling along the spiral and into the cart */}
+      {ride.length > 1 &&
+        shoppingStreamItems.map(({ Icon, delay, color, bg }) => (
+          <motion.div
+            key={`${color}-${delay}`}
+            className={`absolute grid h-10 w-10 place-items-center rounded-2xl border border-white/70 ${bg} shadow-[0_18px_42px_rgba(25,24,71,0.14)] backdrop-blur-md dark:border-white/10 md:h-12 md:w-12`}
+            style={{ left: 0, top: 0, x: "-50%", y: "-50%", opacity: 0 }}
+            animate={{
+              left: ride.map((p) => `${p.x}%`),
+              top: ride.map((p) => `${p.y}%`),
+              opacity: [0, 1, 1, 1, 1, 0.6, 0],
+              scale: [0.45, 1, 1, 1, 1, 0.5, 0.12],
+              rotate: [0, 16, -12, 14, -10, 8, 0],
+            }}
+            transition={{ duration: 9, delay, repeat: Infinity, ease: "linear" }}
+          >
+            <Icon className={`h-5 w-5 ${color} md:h-6 md:w-6`} strokeWidth={1.8} />
+          </motion.div>
+        ))}
     </div>
   );
 }
@@ -232,6 +274,7 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
         aria-hidden="true"
         className="absolute inset-0 bg-[linear-gradient(rgba(25,24,71,.055)_1px,transparent_1px),linear-gradient(90deg,rgba(25,24,71,.055)_1px,transparent_1px)] bg-[size:76px_76px] opacity-70 [mask-image:linear-gradient(180deg,black,transparent_88%)] dark:bg-[linear-gradient(rgba(255,255,255,.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.05)_1px,transparent_1px)]"
       />
+      <CategorySpiral />
 
       <div className="relative z-10 mx-auto max-w-7xl">
         <div className="mb-10 border-b border-black/10 pb-8 dark:border-white/10">
@@ -244,8 +287,8 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
           </h1>
         </div>
 
-        <div className="mb-12 grid items-center gap-7 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[2rem] border border-white/70 bg-white/75 p-3 shadow-[0_24px_80px_rgba(25,24,71,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-white/10">
+        <div className="mb-24 max-w-2xl">
+          <div className="rounded-[2rem] border border-white/70 bg-white/80 p-3 shadow-[0_24px_80px_rgba(25,24,71,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-white/10">
             <div className="flex flex-col gap-3 md:flex-row md:items-center">
               <div className="flex min-h-14 flex-1 items-center gap-3 rounded-3xl bg-white px-4 dark:bg-[#12101a]/70">
                 <Search className="h-5 w-5 shrink-0 text-violet-500" />
@@ -268,10 +311,9 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
               </button>
             </div>
             <p className="px-4 pb-2 pt-3 text-xs font-semibold text-gray-500 dark:text-gray-400">
-              Kadın, erkek, çocuk, kozmetik, elektronik ve daha fazlası için ürün linki yapıştır.
+              Ürün linkini yapıştır, FiltreLAB sepetine girmeden önce analiz etsin.
             </p>
           </div>
-          <CategorySpiral />
         </div>
 
         <div className="mb-12 flex flex-col gap-5 lg:flex-row lg:gap-0">

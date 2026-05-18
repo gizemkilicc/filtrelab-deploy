@@ -10,6 +10,7 @@ import re
 import json
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
 
 def _extract_asin(url: str) -> str | None:
@@ -49,6 +50,7 @@ async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dic
     review_count = None
     category = "Genel"
     slug_keywords = []
+    reviews: list[dict] = []
 
     data_source: dict = {
         "productName": "fallback",
@@ -306,32 +308,63 @@ async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dic
                     product_name = slug.replace("-", " ").title()
                     data_source["productName"] = "slug"
 
+            # ── 6. BeautifulSoup review extraction (best-effort) ───────────
+            # Amazon blocks the review API from headless browsers; try parsing
+            # whatever review text is present in the page HTML directly.
+            try:
+                soup = BeautifulSoup(await page.content(), "html.parser")
+                html_reviews: list[str] = []
+                for selector in (
+                    {"data-hook": "review-body"},
+                    {"class": lambda x: x and "review-text-content" in x},
+                    {"class": lambda x: x and "review-text" in x},
+                ):
+                    for el in soup.find_all(True, selector):
+                        t = el.get_text(strip=True)
+                        if t and len(t) > 10:
+                            html_reviews.append(t[:300])
+                    if html_reviews:
+                        break
+                for t in list(dict.fromkeys(html_reviews))[:20]:
+                    reviews.append({
+                        "id": "", "text": t, "rating": None,
+                        "date": None, "user": None, "source": "amazon_html",
+                    })
+                print(f"[AMAZON] html_reviews_found={len(reviews)}")
+            except Exception as e:
+                print(f"[AMAZON] BeautifulSoup review error: {e}")
+
             print(
                 f"[AMAZON] name={product_name!r} brand={brand!r} "
                 f"price={price!r} rating={rating} reviewCount={review_count} "
                 f"image={'YES' if image else 'NONE'} asin={asin!r}"
             )
-            print(f"[REVIEWS] amazon asin={asin!r} — review text extraction skipped (bot protection)")
-            print(f"[REVIEWS] loaded=0 source=bot_protection_skipped")
+            print(
+                f"[REVIEWS] amazon asin={asin!r} loaded={len(reviews)} "
+                f"source={'amazon_html' if reviews else 'bot_protection_skipped'}"
+            )
 
             await browser.close()
 
     except Exception as e:
         print(f"[AMAZON] playwright error: {e}")
 
+    reviews_loaded = len(reviews)
+    reviews_source = "amazon_html" if reviews_loaded else "bot_protection_skipped"
     review_stats = {
         "reviewCount": review_count,
-        "reviewsLoaded": 0,
-        "dedupedCount": 0,
+        "reviewsLoaded": reviews_loaded,
+        "dedupedCount": reviews_loaded,
         "completed": False,
         "maxReviews": max_reviews or 0,
-        "source": "bot_protection_skipped",
-        "reason": "bot_protection",
-        "error": "reviews_could_not_be_loaded",
+        "source": reviews_source,
+        "reason": "html_extracted" if reviews_loaded else "bot_protection",
         "starDistribution": None,
         "loadedByStar": {str(s): 0 for s in range(1, 6)},
-        "sampleReviews": [],
+        "sampleReviews": [r["text"] for r in reviews[:5]],
     }
+    if reviews_loaded == 0:
+        review_stats["error"] = "reviews_could_not_be_loaded"
 
     return {
         "sourceUrl": url,
@@ -347,9 +380,9 @@ async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dic
         "sellerScore": None,
         "slugKeywords": slug_keywords,
         "dataSource": data_source,
-        "reviews": [],
-        "reviewsLoaded": 0,
-        "reviewsSource": "bot_protection_skipped",
+        "reviews": reviews,
+        "reviewsLoaded": reviews_loaded,
+        "reviewsSource": reviews_source,
         "ratingDistribution": None,
         "reviewStats": review_stats,
     }
