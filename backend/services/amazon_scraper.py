@@ -37,6 +37,18 @@ def _format_price(value) -> str | None:
         return None
 
 
+def _clean_review_text(text: str) -> str:
+    text = re.sub(
+        r"Devamını Oku|Devamini Oku|Read more|Daha fazla göster|Daha az göster|"
+        r"Brief content visible, double tap to read full content\\.|"
+        r"Full content visible, double tap to read brief content\\.",
+        " ",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\\s+", " ", text).strip()
+
+
 async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dict:
     parsed_url = urlparse(url)
     domain = parsed_url.netloc.lower()
@@ -320,12 +332,13 @@ async def scrape_amazon_product(url: str, max_reviews: int | None = None) -> dic
                     {"class": lambda x: x and "review-text" in x},
                 ):
                     for el in soup.find_all(True, selector):
-                        t = el.get_text(strip=True)
+                        t = _clean_review_text(el.get_text(" ", strip=True))
                         if t and len(t) > 10:
                             html_reviews.append(t[:300])
                     if html_reviews:
                         break
-                for t in list(dict.fromkeys(html_reviews))[:20]:
+                review_limit = max_reviews if max_reviews and max_reviews > 0 else 20
+                for t in list(dict.fromkeys(html_reviews))[:review_limit]:
                     reviews.append({
                         "id": "", "text": t, "rating": None,
                         "date": None, "user": None, "source": "amazon_html",

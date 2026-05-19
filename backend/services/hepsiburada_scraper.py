@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
 from .image_utils import normalize_image_url, parse_srcset
-from .price_utils import parse_price_to_string
+from .price_utils import parse_tr_price
 from .review_analytics import compute_review_analytics
 
 _MAX_REVIEWS = int(os.getenv("MAX_REVIEWS", "1000"))
@@ -61,6 +61,8 @@ _BAD_SELLER_KEYWORDS = (
     "other-seller", "othersellers", "diger-satici",
     "merchant-list", "seller-list", "other-merchants",
     "other-offers", "marketplace-offers",
+    "diger-saticilar", "diger-saticilar-listesi",
+    "other-sellers", "seller-card",
 )
 
 # JS snippet injected into any price evaluate() call to skip "Diğer satıcılar"
@@ -73,6 +75,15 @@ _JS_BAD_CONTAINER_FN = """
             const id  = (node.id  || '').toLowerCase();
             const tid = (node.getAttribute ? node.getAttribute('data-test-id') || '' : '').toLowerCase();
             if (BAD.some(k => cls.includes(k) || id.includes(k) || tid.includes(k))) return true;
+            const txt = (node.innerText || node.textContent || '').toLowerCase();
+            if (txt.length < 1400 && (
+                txt.includes('diğer satıcılar') ||
+                txt.includes('diger saticilar') ||
+                txt.includes('tümünü gör') ||
+                txt.includes('tumunu gor') ||
+                txt.includes('ürüne git') ||
+                txt.includes('urune git')
+            )) return true;
             node = node.parentElement;
         }
         return false;
@@ -111,6 +122,36 @@ def _in_bad_container_bs4(el) -> bool:
         node = node.parent
         depth += 1
     return False
+
+
+async def _is_bad_price_element(el) -> bool:
+    """Playwright-side mirror of inBadContainer for Python selector fallbacks."""
+    try:
+        return bool(await el.evaluate(
+            """(el, bad) => {
+                let node = el.parentElement, d = 0;
+                while (node && d++ < 12) {
+                    const cls = (node.className || '').toLowerCase();
+                    const id = (node.id || '').toLowerCase();
+                    const tid = (node.getAttribute ? node.getAttribute('data-test-id') || '' : '').toLowerCase();
+                    if (bad.some(k => cls.includes(k) || id.includes(k) || tid.includes(k))) return true;
+                    const txt = (node.innerText || node.textContent || '').toLowerCase();
+                    if (txt.length < 1400 && (
+                        txt.includes('diğer satıcılar') ||
+                        txt.includes('diger saticilar') ||
+                        txt.includes('tümünü gör') ||
+                        txt.includes('tumunu gor') ||
+                        txt.includes('ürüne git') ||
+                        txt.includes('urune git')
+                    )) return true;
+                    node = node.parentElement;
+                }
+                return false;
+            }""",
+            list(_BAD_SELLER_KEYWORDS),
+        ))
+    except Exception:
+        return False
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -155,6 +196,74 @@ def _parse_review_count(text: str) -> int | None:
             if raw.isdigit():
                 return int(raw)
     return None
+
+
+_HB_PRICE_RE = re.compile(
+    r"(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:TL|₺)",
+    re.IGNORECASE,
+)
+_HB_BAD_PRICE_CONTEXT_RE = re.compile(r"taksit|ayda|kargo|kupon|puan|kazanç|kazanc", re.IGNORECASE)
+
+
+def _extract_hb_price_value(raw) -> float | None:
+    """
+    Extract a single safe current product price from Hepsiburada text.
+    Some HB nodes contain old price + sale price + installment numbers together;
+    parsing that whole text creates huge bogus values. Split candidates first.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    candidates: list[tuple[float, str]] = []
+    for match in _HB_PRICE_RE.finditer(text):
+        start = max(0, match.start() - 32)
+        end = min(len(text), match.end() + 32)
+        context = text[start:end]
+        if _HB_BAD_PRICE_CONTEXT_RE.search(context):
+            continue
+        value = parse_tr_price(match.group(1))
+        if value and 5 < value < 500_000:
+            candidates.append((value, match.group(1)))
+
+    if candidates:
+        if len(candidates) > 1:
+            max_value = max(value for value, _ in candidates)
+            # Drop tiny coupon/discount amounts mixed into the same container.
+            candidates = [(value, raw) for value, raw in candidates if value >= max_value * 0.35]
+        # Discounted/current price is lower than the crossed old price when both
+        # are present in the same HB price container.
+        return min(value for value, _ in candidates)
+
+    # Accept plain numeric source only when it is a short single value, not a
+    # whole container text with several numbers merged together.
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) <= 16:
+        if re.fullmatch(r"\d+\.\d{1,2}", compact):
+            value = float(compact)
+            if 5 < value < 500_000:
+                return value
+        value = parse_tr_price(text)
+        if value and 5 < value < 500_000:
+            return value
+    return None
+
+
+def _format_hb_price(raw) -> str | None:
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    else:
+        value = _extract_hb_price_value(raw)
+    if not value:
+        return None
+    int_part = int(value)
+    decimals = round((value - int_part) * 100)
+    int_str = f"{int_part:,}".replace(",", ".")
+    if decimals > 0:
+        return f"{int_str},{decimals:02d} TL"
+    return f"{int_str} TL"
 
 
 def _is_review_url(url: str) -> bool:
@@ -817,7 +926,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                             if isinstance(offers, list):
                                 offers = offers[0] if offers else {}
                             if not price and isinstance(offers, dict) and offers.get("price"):
-                                p = parse_price_to_string(offers["price"])
+                                p = _format_hb_price(offers["price"])
                                 if p:
                                     price = p
                                     data_source["price"] = "jsonld"
@@ -886,7 +995,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         if el:
                             c = await el.get_attribute("content")
                             if c:
-                                p = parse_price_to_string(c.strip())
+                                p = _format_hb_price(c.strip())
                                 if p:
                                     price = p
                                     data_source["price"] = "meta_og"
@@ -994,7 +1103,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         }
                     """ % _JS_BAD_CONTAINER_FN)
                     if _dom_price:
-                        p = parse_price_to_string(str(_dom_price))
+                        p = _format_hb_price(str(_dom_price))
                         if p:
                             price = p
                             data_source["price"] = "dom_filtered"
@@ -1205,7 +1314,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         }
                     """ % _JS_BAD_CONTAINER_FN)
                     if _js_price2:
-                        p = parse_price_to_string(str(_js_price2))
+                        p = _format_hb_price(str(_js_price2))
                         if p:
                             price = p
                             data_source["price"] = "js_filtered"
@@ -1215,8 +1324,6 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
 
             # ── Price fallback: multi-strategy with [HB-price] logging ──────
             if not price or (isinstance(price, str) and not price.strip()):
-                from .price_utils import parse_tr_price as _parse_tr_price
-
                 _hb_price_float: float | None = None
 
                 # 1) DOM: indirimli/güncel fiyat (önce bunlara bak)
@@ -1229,14 +1336,18 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                     'div[class*="product-price-current"]',
                 ):
                     try:
-                        _el = await page.query_selector(_psel)
-                        if _el:
+                        for _el in await page.query_selector_all(_psel):
+                            if await _is_bad_price_element(_el):
+                                print(f"[HB-price] skip other-seller price {_psel}")
+                                continue
                             _txt = await _el.inner_text()
-                            _v = _parse_tr_price(_txt)
+                            _v = _extract_hb_price_value(_txt)
                             if _v and _v > 5:
                                 _hb_price_float = _v
                                 print(f"[HB-price] İNDİRİMLİ dom {_psel}: {_v}")
                                 break
+                        if _hb_price_float:
+                            break
                     except Exception:
                         continue
 
@@ -1249,14 +1360,18 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         '#offering-price',
                     ):
                         try:
-                            _el = await page.query_selector(_psel)
-                            if _el:
+                            for _el in await page.query_selector_all(_psel):
+                                if await _is_bad_price_element(_el):
+                                    print(f"[HB-price] skip other-seller price {_psel}")
+                                    continue
                                 _txt = await _el.inner_text()
-                                _v = _parse_tr_price(_txt)
+                                _v = _extract_hb_price_value(_txt)
                                 if _v and _v > 5:
                                     _hb_price_float = _v
                                     print(f"[HB-price] NORMAL dom {_psel}: {_v}")
                                     break
+                            if _hb_price_float:
+                                break
                         except Exception:
                             continue
 
@@ -1274,7 +1389,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                                         _off = _off[0] if _off else {}
                                     _p = _off.get('lowPrice') or _off.get('price')
                                     if _p:
-                                        _v = _parse_tr_price(_p)
+                                        _v = _extract_hb_price_value(_p)
                                         if _v:
                                             _hb_price_float = _v
                                             print(f"[HB-price] json-ld: {_v}")
@@ -1292,7 +1407,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         _meta_el = await page.query_selector('meta[property="product:price:amount"]')
                         if _meta_el:
                             _mc = await _meta_el.get_attribute('content')
-                            _v = _parse_tr_price(_mc)
+                            _v = _extract_hb_price_value(_mc)
                             if _v:
                                 _hb_price_float = _v
                                 print(f"[HB-price] meta: {_v}")
@@ -1305,7 +1420,7 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         _hb_html_p2 = await page.content()
                         _rx_matches = re.findall(r'"price"\s*:\s*"?(\d+[.,]?\d*)"?', _hb_html_p2)
                         for _rm in _rx_matches:
-                            _v = _parse_tr_price(_rm)
+                            _v = _extract_hb_price_value(_rm)
                             if _v and 5 < _v < 500_000:
                                 _hb_price_float = _v
                                 print(f"[HB-price] regex: {_v}")
@@ -1314,12 +1429,24 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         print(f"[HB-price] regex error: {e}")
 
                 if _hb_price_float:
-                    price = parse_price_to_string(str(_hb_price_float)) or f"{_hb_price_float} TL"
+                    price = _format_hb_price(_hb_price_float) or f"{_hb_price_float:g} TL"
                     data_source["price"] = "hb_fallback"
                 else:
                     print("[HB-price] ✗ ALL STRATEGIES FAILED")
 
                 print(f"[HB-price] FINAL: {price!r}")
+
+            # Final sanity: never let a merged/malformed HB price reach the UI.
+            if price:
+                safe_price = _format_hb_price(price)
+                if safe_price:
+                    if safe_price != price:
+                        print(f"[HB-price] sanitized malformed price {price!r} -> {safe_price!r}")
+                    price = safe_price
+                else:
+                    print(f"[HB-price] rejected unsafe price: {price!r}")
+                    price = None
+                    data_source.pop("price", None)
 
             # ── Dynamic review limit ───────────────────────────────────────
             # If caller did not pass an explicit max_reviews, compute it from
@@ -1437,10 +1564,14 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         except Exception:
                             continue
 
-                html_reviews = list(dict.fromkeys(html_reviews))[:50]
+                html_reviews = (
+                    list(dict.fromkeys(html_reviews))[:max(50, effective_max_reviews)]
+                    if effective_max_reviews > 0 else []
+                )
                 print(f"[scraper] hepsiburada html_reviews_found={len(html_reviews)}")
 
                 existing_texts = {r.get('text', '')[:80] for r in reviews if isinstance(r, dict)}
+                added_html_reviews = 0
                 for hr in html_reviews:
                     if hr[:80] not in existing_texts:
                         reviews.append({
@@ -1452,6 +1583,14 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                             'source': 'html',
                         })
                         existing_texts.add(hr[:80])
+                        added_html_reviews += 1
+                        if len(reviews) >= effective_max_reviews:
+                            break
+                if added_html_reviews:
+                    if data_source.get("reviews") in {"none", "", None}:
+                        data_source["reviews"] = "html"
+                    if reviews_reason in {"no_reviews_found", "not_started", "not_requested"}:
+                        reviews_reason = "html_fallback"
                 print(f"[scraper] hepsiburada after html merge: total reviews={len(reviews)}")
             except Exception as e:
                 print(f"[scraper] Hepsiburada HTML parse error: {e}")

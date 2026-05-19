@@ -151,17 +151,24 @@ _JS_EXTRACTORS = {
 
 _CACHE: dict[str, tuple[float, dict]] = {}
 _CACHE_TTL = 3600
+_CACHE_VERSION = "v2"
 
 
 def _cache_key(source_platform: str, brand: str, name: str) -> str:
     words = _norm(f"{brand} {name}").split()[:5]
-    return f"{source_platform}:{'_'.join(words)}"
+    return f"{_CACHE_VERSION}:{source_platform}:{'_'.join(words)}"
 
 
 def _get_cached(key: str) -> dict | None:
     entry = _CACHE.get(key)
     if entry and time.time() - entry[0] < _CACHE_TTL:
-        return entry[1]
+        data = entry[1]
+        for match in data.get("matches", []):
+            if match.get("platform") == "hepsiburada" and match.get("found") and not match.get("price"):
+                print(f"[cross] dropping stale cache without Hepsiburada price key={key!r}")
+                _CACHE.pop(key, None)
+                return None
+        return data
     _CACHE.pop(key, None)
     return None
 
@@ -171,6 +178,9 @@ def _set_cached(key: str, data: dict) -> None:
     matches = data.get("matches", [])
     if matches and all(not m.get("found") for m in matches):
         print(f"[cross] skipping cache (all not-found) key={key!r}")
+        return
+    if any(m.get("platform") == "hepsiburada" and m.get("found") and not m.get("price") for m in matches):
+        print(f"[cross] skipping cache (Hepsiburada price missing) key={key!r}")
         return
     _CACHE[key] = (time.time(), data)
     if len(_CACHE) > 500:
@@ -236,6 +246,7 @@ _KNOWN_BRANDS = frozenset({
 
 _STOP_WORDS = frozenset({
     've', 'ile', 'icin', 'a', 'an', 'the', 'of', 'in', 'on', 'at', 'by',
+    'tüm', 'tum', 'ciltler', 'için',
     'erkek', 'kadin', 'cocuk', 'unisex', 'yetiskin',
     'spor', 'urun', 'yeni', 'orijinal', 'orjinal', 'garanti',
     'ayakkabi', 'sneaker', 'bot', 'sandalet',  # generic category words
@@ -372,8 +383,17 @@ def _build_query(brand: str, name: str) -> str:
     Stripping colors widens results to all variants of the same model.
     """
     full = f"{brand} {name}".strip() if brand else name
-    words = [w for w in full.split() if w.lower() not in _COLOR_WORDS]
-    return " ".join(words[:7])
+    words: list[str] = []
+    seen: set[str] = set()
+    for word in full.split():
+        key = _normalize_text(word)
+        if not key or key in seen:
+            continue
+        if key in _COLOR_WORDS or key in _STOP_WORDS:
+            continue
+        words.append(word)
+        seen.add(key)
+    return " ".join(words[:12])
 
 
 def _str_to_price(price_str: str) -> float | None:
@@ -534,7 +554,7 @@ async def _run_parallel_searches(
 
 # ─── Public API ──────────────────────────────────────────────────────────────
 
-_ACCEPT_THRESHOLD = 0.65
+_ACCEPT_THRESHOLD = 0.60
 
 
 async def find_cross_platform_matches(

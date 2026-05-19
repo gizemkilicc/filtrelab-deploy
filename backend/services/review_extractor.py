@@ -1,8 +1,9 @@
 import asyncio
 import json
+import os
 import re
 from html import unescape
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -41,11 +42,39 @@ _STEALTH = """
     Object.defineProperty(navigator, 'languages', {get: () => ['tr-TR', 'tr', 'en-US', 'en']});
     window.chrome = { runtime: {} };
 """
+_MAX_AMAZON_REVIEW_PAGES = int(os.getenv("AMAZON_REVIEW_PAGES", "30"))
+
+
+def _is_relevant_review_response(response_url: str, platform: str) -> bool:
+    low = response_url.lower()
+    if platform == "trendyol":
+        return (
+            ("trendyol.com" in low or "trendyol" in low)
+            and any(key in low for key in ("product-reviews", "review-read", "comments", "comment"))
+        )
+    if platform == "hepsiburada":
+        return (
+            "hepsiburada" in low
+            and any(key in low for key in ("usercontent", "approvedusercontents", "review", "comment", "yorum"))
+        )
+    if platform == "amazon_tr":
+        return (
+            "amazon.com.tr" in low
+            and any(key in low for key in ("review", "reviews", "customerreviews", "hz/reviews"))
+        )
+    return any(keyword in low for keyword in _KEYWORDS)
 
 
 def _norm_space(value: str | None) -> str:
     text = unescape(str(value or ""))
-    text = re.sub(r"Devamını Oku|Devamini Oku|Read more", " ", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"Devamını Oku|Devamini Oku|Read more|Daha fazla göster|Daha az göster|"
+        r"Brief content visible, double tap to read full content\\.|"
+        r"Full content visible, double tap to read brief content\\.",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -330,6 +359,49 @@ async def _extract_dom_reviews(page) -> list[dict]:
     return reviews
 
 
+async def _extract_amazon_dom_reviews(page) -> list[dict]:
+    raw = await page.evaluate("""
+        () => {
+            const cards = Array.from(document.querySelectorAll('[data-hook="review"], div[id^="customer_review-"], .review'));
+            return cards.map((card) => {
+                const body = card.querySelector('[data-hook="review-body"], .review-text-content, .review-text');
+                const title = card.querySelector('[data-hook="review-title"]');
+                const ratingEl = card.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"], .review-rating');
+                const userEl = card.querySelector('.a-profile-name, [data-hook="genome-widget"] .a-profile-name');
+                const dateEl = card.querySelector('[data-hook="review-date"], .review-date');
+                const text = [
+                    title ? (title.innerText || title.textContent || '') : '',
+                    body ? (body.innerText || body.textContent || '') : ''
+                ].join(' ').replace(/\\s+/g, ' ').trim();
+                const ratingText = ratingEl ? (ratingEl.innerText || ratingEl.textContent || ratingEl.getAttribute('aria-label') || '') : '';
+                const match = ratingText.match(/([1-5])(?:[,.]\\d+)?/);
+                return {
+                    id: card.id || '',
+                    text,
+                    rating: match ? parseInt(match[1], 10) : null,
+                    user: userEl ? (userEl.innerText || userEl.textContent || '').trim() : null,
+                    date: dateEl ? (dateEl.innerText || dateEl.textContent || '').trim() : null
+                };
+            });
+        }
+    """)
+    reviews = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text") or ""
+        if _is_probable_review_text(text):
+            reviews.append({
+                "id": str(item.get("id") or ""),
+                "text": _norm_space(text),
+                "rating": _parse_rating(item.get("rating")),
+                "user": _norm_space(item.get("user")) if item.get("user") else None,
+                "date": _norm_space(item.get("date")) if item.get("date") else None,
+                "source": "amazon_dom",
+            })
+    return reviews
+
+
 def _extract_html_reviews(html: str) -> list[dict]:
     reviews = []
     for match in re.finditer(r"[^<>]{20,700}(?:yorum|memnun|beğen|tavsiye|kalite|ürün|kargo)[^<>]{0,700}", html, flags=re.IGNORECASE):
@@ -340,13 +412,18 @@ def _extract_html_reviews(html: str) -> list[dict]:
     return reviews
 
 
-def _amazon_reviews_url(url: str) -> str | None:
+def _amazon_reviews_url(url: str, page_number: int = 1) -> str | None:
     match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", url)
     if not match:
         return None
     parsed = urlparse(url)
     host = parsed.netloc or "www.amazon.com.tr"
-    return f"https://{host}/product-reviews/{match.group(1)}?reviewerType=all_reviews"
+    params = {
+        "reviewerType": "all_reviews",
+        "sortBy": "recent",
+        "pageNumber": str(max(1, page_number)),
+    }
+    return f"https://{host}/product-reviews/{match.group(1)}?{urlencode(params)}"
 
 
 async def extract_reviews(url: str, platform: str, max_reviews: int = 1000) -> dict:
@@ -378,8 +455,8 @@ async def extract_reviews(url: str, platform: str, max_reviews: int = 1000) -> d
             tasks: list[asyncio.Task] = []
 
             async def handle_response(response):
-                response_url = response.url.lower()
-                if not any(keyword in response_url for keyword in _KEYWORDS):
+                response_url = response.url
+                if not _is_relevant_review_response(response_url, platform):
                     return
                 if response.status >= 400:
                     return
@@ -396,7 +473,8 @@ async def extract_reviews(url: str, platform: str, max_reviews: int = 1000) -> d
 
             page.on("response", lambda response: tasks.append(asyncio.create_task(handle_response(response))))
 
-            target_url = _amazon_reviews_url(url) if platform == "amazon_tr" else url
+            amazon_paginated_reviews: list[dict] = []
+            target_url = _amazon_reviews_url(url, 1) if platform == "amazon_tr" else url
             try:
                 await page.goto(target_url or url, wait_until="domcontentloaded", timeout=45000)
             except PlaywrightTimeoutError:
@@ -408,6 +486,47 @@ async def extract_reviews(url: str, platform: str, max_reviews: int = 1000) -> d
             await _scroll_like_user(page)
             if tasks:
                 await asyncio.gather(*tasks[:40], return_exceptions=True)
+
+            if platform == "amazon_tr":
+                seen_amazon: set[str] = set()
+                empty_pages = 0
+                max_pages = min(_MAX_AMAZON_REVIEW_PAGES, max(1, (max_reviews + 9) // 10))
+                for page_number in range(1, max_pages + 1):
+                    if page_number > 1:
+                        next_url = _amazon_reviews_url(url, page_number)
+                        if not next_url:
+                            break
+                        try:
+                            await page.goto(next_url, wait_until="domcontentloaded", timeout=25000)
+                            await page.wait_for_timeout(1200)
+                            await _scroll_like_user(page)
+                        except Exception as page_error:
+                            print(f"[REVIEWS AMAZON] page={page_number} navigation_error={page_error}")
+                            break
+
+                    page_reviews = await _extract_amazon_dom_reviews(page)
+                    added = 0
+                    for review in page_reviews:
+                        key = re.sub(r"\W+", "", (review.get("text") or "").lower())[:180]
+                        if key and key not in seen_amazon:
+                            seen_amazon.add(key)
+                            amazon_paginated_reviews.append(review)
+                            added += 1
+                            if len(amazon_paginated_reviews) >= max_reviews:
+                                break
+
+                    print(
+                        f"[REVIEWS AMAZON] page={page_number} "
+                        f"loaded={len(page_reviews)} added={added} total={len(amazon_paginated_reviews)}"
+                    )
+                    if len(amazon_paginated_reviews) >= max_reviews:
+                        break
+                    if added == 0:
+                        empty_pages += 1
+                        if empty_pages >= 2:
+                            break
+                    else:
+                        empty_pages = 0
 
             try:
                 title = (await page.title()).lower()
@@ -421,7 +540,7 @@ async def extract_reviews(url: str, platform: str, max_reviews: int = 1000) -> d
             html = await page.content()
             for blob in _extract_json_blobs_from_html(html):
                 _collect_reviews_recursive(blob, "embedded_json", embedded_reviews)
-            dom_reviews = await _extract_dom_reviews(page)
+            dom_reviews = amazon_paginated_reviews if amazon_paginated_reviews else await _extract_dom_reviews(page)
             html_reviews = _extract_html_reviews(html)
             await browser.close()
 

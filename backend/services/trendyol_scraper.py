@@ -1174,7 +1174,10 @@ async def _fetch_all_pages(
     api_total_count: int | None = None
     api_total_pages: int | None = None
 
-    target = min(review_count if review_count else max_reviews, max_reviews)
+    # Never let a scraped count cap pagination. Trendyol pages may contain
+    # unrelated "1. ürün" / ranking text near the rating area; if that is
+    # misread as reviewCount, using it as the target makes us stop at 1 review.
+    target = max_reviews
 
     if review_count:
         print(f"[REVIEWS] reviewCount={review_count}")

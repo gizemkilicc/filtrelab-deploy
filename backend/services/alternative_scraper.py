@@ -218,53 +218,158 @@ _JS_HEPSIBURADA = """
         name = name.replace(/\\s+/g, ' ').substring(0, 120);
         if (!name || name.length < 3) continue;
 
-        // Price extraction: explicit selectors → aria-label → content scan
-        let price = '';
-        const card = a.closest('li, article, [class*="productCard"], [class*="product-card"]') || a.parentElement;
+        // Fiyat çekme - çoklu strateji
+        let price = null;
+        let priceText = '';
+        const cardCandidates = [];
+        let node = a;
+        for (let depth = 0; node && depth < 8; depth++) {
+            cardCandidates.push(node);
+            node = node.parentElement;
+        }
+        const card = cardCandidates.find(el => {
+            const t = el.innerText || el.textContent || '';
+            return /(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:TL|₺)/.test(t) || el.querySelector('[data-price]');
+        }) || a.closest('li, article, [data-test-id*="product"], [data-test-id*="Product"], [class*="productCard"], [class*="product-card"], [class*="ProductCard"]') || a.parentElement?.parentElement || a.parentElement;
         if (card) {
-            // 1) Explicit data-test-id / class selectors (2024-2025 HB patterns)
-            const PRICE_SELS = [
+            const parseHbPrice = raw => {
+                if (!raw) return null;
+                let cleaned = String(raw).replace(/[^\\d,.]/g, '');
+                if (!cleaned) return null;
+                if (cleaned.includes(',') && cleaned.includes('.')) {
+                    const lastComma = cleaned.lastIndexOf(',');
+                    const lastDot = cleaned.lastIndexOf('.');
+                    if (lastComma > lastDot) {
+                        cleaned = cleaned.replace(/\\./g, '').replace(',', '.');
+                    } else {
+                        cleaned = cleaned.replace(/,/g, '');
+                    }
+                } else if (cleaned.includes(',')) {
+                    const commaIdx = cleaned.lastIndexOf(',');
+                    const digitsAfter = cleaned.length - commaIdx - 1;
+                    if (digitsAfter === 2) {
+                        cleaned = cleaned.replace(',', '.');
+                    } else if (digitsAfter === 3) {
+                        cleaned = cleaned.replace(',', '');
+                    }
+                } else if (cleaned.includes('.')) {
+                    const dotIdx = cleaned.lastIndexOf('.');
+                    const digitsAfter = cleaned.length - dotIdx - 1;
+                    if (digitsAfter === 3) {
+                        cleaned = cleaned.replace(/\\./g, '');
+                    }
+                }
+                const parsed = parseFloat(cleaned);
+                return !isNaN(parsed) && parsed > 5 && parsed < 500000 ? parsed : null;
+            };
+
+            const formatHbPrice = value => value.toLocaleString('tr-TR', {
+                minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+                maximumFractionDigits: 2,
+            }) + ' TL';
+
+            const priceCandidatesFromText = text => {
+                const matches = Array.from(String(text || '').matchAll(/(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:TL|₺)/g));
+                return matches
+                    .map(match => {
+                        const raw = match[1];
+                        const value = parseHbPrice(raw);
+                        const start = Math.max(0, match.index - 28);
+                        const end = Math.min(String(text || '').length, match.index + match[0].length + 28);
+                        const context = String(text || '').slice(start, end).toLowerCase();
+                        return { raw, value, context };
+                    })
+                    .filter(item => item.value);
+            };
+
+            const pickCurrentPrice = text => {
+                const candidates = priceCandidatesFromText(text)
+                    .filter(item => !/(taksit|ayda|ay\\s*x|kargo|kupon)/i.test(item.context));
+                const usable = candidates.length ? candidates : priceCandidatesFromText(text);
+                if (!usable.length) return null;
+                // İndirimli ürünlerde aynı blokta eski fiyat + satış fiyatı birlikte gelir.
+                // Bu durumda satış fiyatı genelde daha düşük olduğu için onu seçiyoruz.
+                return usable.reduce((best, item) => item.value < best.value ? item : best, usable[0]);
+            };
+
+            // Strateji 1: data-test-id selectors (en güncel)
+            const priceSelectors = [
                 '[data-test-id="price-current-price"]',
+                '[data-test-id*="current"]',
+                '[data-test-id*="discount"]',
                 '[data-test-id="price"]',
+                '[class*="discount"]',
+                '[class*="sale"]',
                 '[class*="price-value"]',
-                '[class*="priceContainer"] span',
+                '[class*="priceContainer"]',
                 '[class*="product-price"]',
                 '[class*="curr-price"]',
                 '[class*="hbs-product-price"]',
-                '[class*="currentPrice"]',
+                '[class*="prices"] span',
             ];
-            for (const psel of PRICE_SELS) {
-                const el = card.querySelector(psel);
+
+            for (const sel of priceSelectors) {
+                const el = card.querySelector(sel);
                 if (el) {
-                    const t = el.textContent.trim().replace(/\\s+/g, ' ');
-                    const m = t.match(TR_PRICE_RE);
-                    if (m) { price = m[0]; break; }
-                    // Also accept plain number followed by TL/₺ anywhere in text
-                    if (/\\d/.test(t) && (t.includes('TL') || t.includes('₺'))) {
-                        price = t.substring(0, 30); break;
+                    const marker = [
+                        el.getAttribute('class') || '',
+                        el.getAttribute('data-test-id') || '',
+                        el.parentElement?.getAttribute('class') || '',
+                        el.parentElement?.getAttribute('data-test-id') || '',
+                    ].join(' ').toLowerCase();
+                    if (/(old|strike|strikethrough|line-through|original|previous|before|eski|üstü|ustu)/.test(marker)) {
+                        continue;
+                    }
+                    const txt = el.innerText || el.textContent || '';
+                    if (txt && /\\d/.test(txt)) {
+                        const picked = pickCurrentPrice(txt);
+                        if (picked) {
+                            priceText = picked.raw;
+                            price = formatHbPrice(picked.value);
+                            break;
+                        }
+                        priceText = txt;
+                        break;
                     }
                 }
             }
-            // 2) aria-label on any element (common HB pattern)
+
+            // Strateji 2: Kartın tüm metninden regex ile fiyat ara
             if (!price) {
-                const h2 = card.querySelector('[aria-label]');
-                if (h2) {
-                    const m = (h2.getAttribute('aria-label') || '').match(TR_PRICE_RE);
-                    if (m) price = m[0];
+                const fullText = card.innerText || card.textContent || '';
+                const picked = pickCurrentPrice(fullText);
+                if (picked) {
+                    priceText = picked.raw;
+                    price = formatHbPrice(picked.value);
                 }
             }
-            // 3) content-scan: leaf elements matching TR price RE
+
+            // Strateji 3: data-price attribute
             if (!price) {
-                const allEls = Array.from(card.querySelectorAll('*'));
-                for (const el of allEls) {
-                    if (el.children.length > 2) continue;
-                    const t = el.textContent.trim();
-                    if (TR_PRICE_RE.test(t)) {
-                        const m = t.match(TR_PRICE_RE);
-                        if (m) { price = m[0]; break; }
+                const attrEl = card.querySelector('[data-price]');
+                if (attrEl) {
+                    const attrPrice = attrEl.getAttribute('data-price') || '';
+                    const parsed = parseHbPrice(attrPrice);
+                    if (parsed) {
+                        priceText = attrPrice;
+                        price = formatHbPrice(parsed);
                     }
                 }
             }
+
+            // Parse TR price format
+            if (!price && priceText) {
+                const isolatedPrice = priceText.match(/(\\d{1,3}(?:[.,]\\d{3})*(?:[.,]\\d{1,2})?)\\s*(?:TL|₺)?/);
+                if (isolatedPrice) {
+                    priceText = isolatedPrice[1];
+                }
+                const parsed = parseHbPrice(priceText);
+                if (parsed) {
+                    price = formatHbPrice(parsed);
+                }
+            }
+
+            console.log('[HB-JS] price:', priceText, '->', price);
         }
 
         results.push({ href, name, price, src });

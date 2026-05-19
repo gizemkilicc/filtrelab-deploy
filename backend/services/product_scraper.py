@@ -23,6 +23,21 @@ async def _attach_reviews(result: dict, url: str, platform: str, max_reviews: in
     if not max_reviews or max_reviews <= 0 or platform not in {"trendyol", "hepsiburada", "amazon_tr"}:
         return result
     review_data = await extract_reviews(url, platform, max_reviews=max_reviews)
+    existing_reviews = result.get("reviews") or []
+    existing_loaded = int(result.get("reviewsLoaded") or len(existing_reviews) or 0)
+    new_loaded = int(review_data.get("reviewsLoaded") or 0)
+    if existing_loaded > new_loaded:
+        print(
+            f"[scraper_router] keeping platform reviews for {platform}: "
+            f"existing={existing_loaded} generic={new_loaded}"
+        )
+        stats = result.get("reviewStats") or {}
+        stats["reviewsLoaded"] = existing_loaded
+        stats["dedupedCount"] = existing_loaded
+        stats["maxReviews"] = max_reviews
+        stats["source"] = result.get("reviewsSource", stats.get("source", "platform"))
+        result["reviewStats"] = stats
+        return result
     result["reviews"] = review_data.get("reviews", [])
     result["reviewsLoaded"] = review_data.get("reviewsLoaded", 0)
     result["reviewsSource"] = review_data.get("reviewsSource", "none")
@@ -81,14 +96,14 @@ async def _scrape_product_impl(url: str, max_reviews: int | None = None) -> dict
             result = await scrape_trendyol_product(url, max_reviews=max_reviews or 0)
             return normalize_scraper_result(result, url, platform_display_name(platform))
         elif platform == "hepsiburada":
-            result = await scrape_hepsiburada_product(url, max_reviews=0)
-            return normalize_scraper_result(
-                await _attach_reviews(result, url, platform, max_reviews),
-                url,
-                platform_display_name(platform),
-            )
+            # Hepsiburada has a platform-specific review paginator that can
+            # follow captured review endpoints and the "-yorumlari" pages.
+            # Use it directly instead of the generic extractor so AI analysis
+            # gets more than the first rendered page whenever HB exposes it.
+            result = await scrape_hepsiburada_product(url, max_reviews=max_reviews or 0)
+            return normalize_scraper_result(result, url, platform_display_name(platform))
         elif platform == "amazon_tr":
-            result = await scrape_amazon_product(url, max_reviews=0)
+            result = await scrape_amazon_product(url, max_reviews=max_reviews or 0)
             return normalize_scraper_result(
                 await _attach_reviews(result, url, platform, max_reviews),
                 url,
