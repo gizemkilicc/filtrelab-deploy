@@ -3,18 +3,12 @@
 /**
  * SYSTEM 1 — Pseudo Comprehend frontend bileşeni.
  *
- * Backend'in /analyze yanıtındaki `reviewIntelligence` verisini gösterir:
- *  - AI kaynak rozeti (AWS Comprehend / DeepSeek)
- *  - Duygu dağılımı kartı
- *  - Sahte yorum riski / güven kartı + uyarı
- *  - Yorumlarda öne çıkan anahtar kelimeler
- *
+ * Backend'in /analyze yanıtındaki `reviewIntelligence` verisini gösterir.
  * Veri yoksa veya hiç yorum analiz edilmediyse hiçbir şey render etmez.
  */
 
 import { motion } from "framer-motion";
-import { Brain, ShieldAlert, ShieldCheck, Tag, Cloud, Sparkles } from "lucide-react";
-import { AnimatedCard } from "@/components/ui/AnimatedCard";
+import { AlertTriangle } from "lucide-react";
 
 export interface ReviewIntelligenceData {
   sentiment_score: number;
@@ -28,114 +22,111 @@ export interface ReviewIntelligenceData {
   source: "aws_comprehend" | "deepseek_fallback";
 }
 
-const SOURCE_META: Record<string, { label: string; cls: string }> = {
-  aws_comprehend: {
-    label: "AWS Comprehend",
-    cls: "bg-orange-100 text-orange-700 border-orange-300/50 dark:bg-orange-900/30 dark:text-orange-300",
-  },
-  deepseek_fallback: {
-    label: "DeepSeek AI",
-    cls: "bg-blue-100 text-blue-700 border-blue-300/50 dark:bg-blue-900/30 dark:text-blue-300",
-  },
+const SOURCE_LABEL: Record<string, string> = {
+  aws_comprehend: "AWS Comprehend",
+  deepseek_fallback: "DeepSeek AI",
 };
+
+const NEGATIVE = "#9c5b4d";
 
 export function ReviewIntelligence({ data }: { data: ReviewIntelligenceData }) {
   const analyzed = data.positive + data.negative + data.neutral + data.mixed;
   // Hiç yorum analiz edilmediyse bölümü gösterme.
   if (analyzed <= 0) return null;
 
-  const src = SOURCE_META[data.source] ?? SOURCE_META.deepseek_fallback;
+  const srcLabel = SOURCE_LABEL[data.source] ?? SOURCE_LABEL.deepseek_fallback;
   const risk = data.review_risk_score;
   const riskLevel = risk >= 60 ? "Yüksek" : risk >= 30 ? "Orta" : "Düşük";
-  const riskColor = risk >= 60 ? "text-red-500" : risk >= 30 ? "text-yellow-500" : "text-green-500";
+  const riskColor = risk >= 60 ? NEGATIVE : risk >= 30 ? "var(--verdict-caution)" : "var(--verdict-buy)";
 
   const pct = (n: number) => Math.round((n / analyzed) * 100);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
+    <motion.section
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.9 }}
-      className="mt-14 pt-10 border-t border-white/10"
+      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+      className="fl-divider mt-16 pt-10"
     >
       {/* Başlık + AI kaynak rozeti */}
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
-        <h3 className="text-xl font-bold flex items-center gap-2">
-          <Brain className="text-[var(--neon-purple)]" /> Yapay Zeka Yorum Analizi
-        </h3>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="fl-kicker">EVRE · YAPAY ZEKA YORUM ANALİZİ</p>
         <span
           title="Bu analizi üreten yapay zeka motoru"
-          className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${src.cls}`}
+          className="fl-pill text-[var(--ink-30)]"
         >
-          <Cloud className="w-3.5 h-3.5" /> {src.label}
+          {srcLabel}
         </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* Duygu dağılımı kartı */}
-        <AnimatedCard className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="w-5 h-5 text-[var(--neon-green)]" />
-            <h4 className="font-bold">Duygu Dağılımı</h4>
+        <div className="fl-card p-7">
+          <p className="fl-data-label">Duygu Dağılımı</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="fl-serif text-[48px] leading-none text-[var(--paper)]">
+              %{data.sentiment_score}
+            </span>
+            <span className="fl-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-30)]">
+              olumlu duygu
+            </span>
           </div>
-          <div className="text-4xl font-black mb-1">%{data.sentiment_score}</div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mb-4">olumlu duygu skoru</div>
 
           {/* Yığılmış oran çubuğu */}
-          <div className="flex h-3 rounded-full overflow-hidden mb-3 bg-gray-200 dark:bg-white/10">
-            {data.positive > 0 && <div style={{ width: `${pct(data.positive)}%` }} className="bg-green-500" />}
-            {data.neutral > 0 && <div style={{ width: `${pct(data.neutral)}%` }} className="bg-gray-400" />}
-            {data.mixed > 0 && <div style={{ width: `${pct(data.mixed)}%` }} className="bg-yellow-400" />}
-            {data.negative > 0 && <div style={{ width: `${pct(data.negative)}%` }} className="bg-red-500" />}
+          <div className="mt-5 mb-3 flex h-[6px] overflow-hidden" style={{ background: "var(--ink-70)" }}>
+            {data.positive > 0 && <div style={{ width: `${pct(data.positive)}%`, background: "var(--verdict-buy)" }} />}
+            {data.neutral > 0 && <div style={{ width: `${pct(data.neutral)}%`, background: "var(--ink-50)" }} />}
+            {data.mixed > 0 && <div style={{ width: `${pct(data.mixed)}%`, background: "var(--brass-deep)" }} />}
+            {data.negative > 0 && <div style={{ width: `${pct(data.negative)}%`, background: NEGATIVE }} />}
           </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold">
-            <span className="text-green-600 dark:text-green-400">● Olumlu {data.positive}</span>
-            <span className="text-gray-500 dark:text-gray-400">● Nötr {data.neutral}</span>
-            <span className="text-yellow-600 dark:text-yellow-400">● Karışık {data.mixed}</span>
-            <span className="text-red-600 dark:text-red-400">● Olumsuz {data.negative}</span>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 fl-mono text-[10px] uppercase tracking-[0.08em]">
+            <span style={{ color: "var(--verdict-buy)" }}>Olumlu {data.positive}</span>
+            <span style={{ color: "var(--ink-30)" }}>Nötr {data.neutral}</span>
+            <span style={{ color: "var(--brass)" }}>Karışık {data.mixed}</span>
+            <span style={{ color: NEGATIVE }}>Olumsuz {data.negative}</span>
           </div>
-        </AnimatedCard>
+        </div>
 
         {/* Sahte yorum / güven kartı */}
-        <AnimatedCard className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            {risk >= 60 ? (
-              <ShieldAlert className="w-5 h-5 text-red-500" />
-            ) : (
-              <ShieldCheck className="w-5 h-5 text-[var(--neon-green)]" />
-            )}
-            <h4 className="font-bold">Sahte Yorum Analizi</h4>
+        <div className="fl-card p-7">
+          <p className="fl-data-label">Sahte Yorum Analizi</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="fl-serif text-[48px] leading-none" style={{ color: riskColor }}>
+              %{risk}
+            </span>
+            <span className="fl-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-30)]">
+              risk — {riskLevel}
+            </span>
           </div>
-          <div className={`text-4xl font-black mb-1 ${riskColor}`}>%{risk}</div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-            şüpheli yorum risk skoru — {riskLevel}
-          </div>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
-            {analyzed} yorumdan <strong>{data.suspicious_review_count}</strong> tanesi şüpheli işaretlendi.
-            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-1">
+          <p className="mt-4 fl-sans text-[13px] leading-relaxed text-[var(--ink-10)]">
+            {analyzed} yorumdan <strong className="text-[var(--paper)]">{data.suspicious_review_count}</strong> tanesi
+            şüpheli işaretlendi.
+            <span className="mt-1 block fl-sans text-[11px] text-[var(--ink-30)]">
               Kontroller: tekrar eden yorum, kısa/jenerik metin, emoji spam, puan-metin uyumsuzluğu.
             </span>
           </p>
           {risk >= 60 && (
-            <p className="mt-3 text-xs rounded-xl border border-red-300/50 bg-red-50 px-3 py-2 text-red-700 dark:bg-red-900/20 dark:text-red-300">
-              ⚠ Bu üründe manipüle edilmiş yorum olasılığı yüksek — yorumlara temkinli yaklaşın.
+            <p
+              className="mt-4 flex items-start gap-2 rounded-[3px] border px-3 py-2 fl-sans text-[12px]"
+              style={{ borderColor: NEGATIVE, color: NEGATIVE }}
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span>Bu üründe manipüle edilmiş yorum olasılığı yüksek — yorumlara temkinli yaklaşın.</span>
             </p>
           )}
-        </AnimatedCard>
+        </div>
       </div>
 
       {/* Anahtar kelime analizi */}
       {data.detected_key_phrases.length > 0 && (
         <div className="mt-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Tag className="w-4 h-4 text-[var(--neon-blue)]" />
-            <h4 className="text-sm font-bold">Yorumlarda Öne Çıkan Kelimeler</h4>
-          </div>
+          <p className="fl-kicker mb-3">YORUMLARDA ÖNE ÇIKAN KELİMELER</p>
           <div className="flex flex-wrap gap-2">
             {data.detected_key_phrases.map((kw, i) => (
               <span
                 key={i}
-                className="rounded-full border border-[var(--neon-blue)]/20 bg-[var(--neon-blue)]/10 px-3 py-1 text-xs font-semibold text-[var(--neon-blue)]"
+                className="rounded-[2px] border px-3 py-1 fl-mono text-[11px] text-[var(--ink-10)]"
+                style={{ borderColor: "var(--ink-70)" }}
               >
                 {kw}
               </span>
@@ -143,6 +134,6 @@ export function ReviewIntelligence({ data }: { data: ReviewIntelligenceData }) {
           </div>
         </div>
       )}
-    </motion.div>
+    </motion.section>
   );
 }

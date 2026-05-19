@@ -1,14 +1,15 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { User, Menu, Sun, Moon, LogOut, Heart, History, IdCard } from "lucide-react";
+import { User, Sun, Moon, LogOut, Heart, History, IdCard } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthModal } from "./AuthModal";
 import { useTheme } from "./ThemeProvider";
 import { getMe, logoutUser, type AuthUser } from "@/lib/apiClient";
+
+const MONTHS_TR = ["OCA", "ŞUB", "MAR", "NİS", "MAY", "HAZ", "TEM", "AĞU", "EYL", "EKİ", "KAS", "ARA"];
 
 export function Navbar() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -16,11 +17,16 @@ export function Navbar() {
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [today, setToday] = useState("");
   const { theme, setTheme } = useTheme();
   const router = useRouter();
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setMounted(true), 0);
+    const timer = window.setTimeout(() => {
+      setMounted(true);
+      const d = new Date();
+      setToday(`${d.getDate()} ${MONTHS_TR[d.getMonth()]} ${d.getFullYear()}`);
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -63,84 +69,108 @@ export function Navbar() {
 
   const fullName = user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.name : "";
 
+  const iconBtn =
+    "flex items-center justify-center w-9 h-9 rounded-[3px] border border-[var(--border-strong)] text-[var(--ink-30)] transition-colors duration-300 hover:border-[var(--brass)] hover:text-[var(--brass)]";
+
   return (
     <>
       <motion.nav
-        initial={{ y: -20, opacity: 0 }}
+        initial={{ y: -16, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
-        className="fixed top-0 left-0 right-0 z-50 p-4 md:p-6 pointer-events-none"
+        transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+        className="relative z-50"
+        style={{ background: "var(--bg-deep)", borderBottom: "1px solid var(--ink-70)" }}
       >
-        <div className="max-w-7xl mx-auto liquid-glass gloss-overlay rounded-full px-7 py-3.5 flex items-center justify-between pointer-events-auto shadow-[0_12px_40px_rgba(0,0,0,0.05)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.4)] border border-white dark:border-white/10">
-          <Link href="/" className="flex items-center space-x-3 group shrink-0">
-            <div className="relative w-12 h-12 rounded-[14px] overflow-hidden group-hover:scale-105 transition-transform duration-700 will-change-transform shadow-[0_4px_15px_rgba(0,0,0,0.06)] border border-white/60 bg-white dark:bg-white/10">
-              <Image src="/images/logo.png" alt="FiltreLAB Logo" fill className="object-cover scale-110" />
-            </div>
-
-            <span className="text-[22px] font-medium tracking-tight hidden sm:block text-gray-700 dark:text-gray-200 drop-shadow-sm">
-              Filtre<span className="font-bold text-gray-900 dark:text-white">LAB</span>
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
+          {/* Left — wordmark + tagline */}
+          <Link href="/" className="flex items-baseline gap-3 group">
+            <span className="fl-serif italic text-[20px] text-[var(--paper)] transition-colors group-hover:text-[var(--brass)]">
+              FiltreLAB
+            </span>
+            <span className="hidden h-px w-5 bg-[var(--ink-70)] sm:inline-block" />
+            <span className="hidden fl-mono text-[11px] uppercase tracking-[0.14em] text-[var(--ink-10)] sm:inline">
+              Akıllı Alışveriş Asistanı
             </span>
           </Link>
 
-          <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+          {/* Right — live status + controls */}
+          <div className="flex items-center gap-4">
+            <span className="hidden items-center gap-2 fl-mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink-10)] sm:flex">
+              <span
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{ background: "var(--brass)" }}
+              />
+              Canlı{today && ` · ${today}`}
+            </span>
+
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               aria-label="Temayı değiştir"
-              className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all hover:scale-105 will-change-transform p-2 bg-white/60 dark:bg-white/5 hover:bg-white dark:hover:bg-white/10 rounded-full shadow-[inset_0_1px_2px_rgba(255,255,255,1)]"
+              className={iconBtn}
             >
-              {mounted ? (
-                theme === "dark" ? (
-                  <Sun className="w-[18px] h-[18px]" />
-                ) : (
-                  <Moon className="w-[18px] h-[18px]" />
-                )
+              {mounted && theme !== "dark" ? (
+                <Moon className="h-[16px] w-[16px]" />
               ) : (
-                <Moon className="w-[18px] h-[18px]" />
+                <Sun className="h-[16px] w-[16px]" />
               )}
             </button>
 
             <div className="relative">
-              <button
-                onClick={handleProfileClick}
-                className="text-gray-700 dark:text-gray-200 transition-all duration-500 hover:scale-105 bg-white dark:bg-white/10 hover:bg-gray-50 dark:hover:bg-white/20 border border-white dark:border-white/10 p-2.5 rounded-full shadow-[inset_0_2px_4px_rgba(255,255,255,1),0_4px_12px_rgba(0,0,0,0.05)] will-change-transform flex items-center justify-center"
-                aria-label="Profil"
-              >
-                <User className="w-[18px] h-[18px]" />
+              <button onClick={handleProfileClick} className={iconBtn} aria-label="Profil">
+                <User className="h-[16px] w-[16px]" />
               </button>
               {isProfileOpen && user && (
-                <div className="absolute right-0 top-14 w-72 rounded-3xl border border-white/80 dark:border-white/10 bg-white/95 dark:bg-[#12101a]/95 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-2xl">
-                  <div className="border-b border-black/10 dark:border-white/10 pb-3 mb-3">
-                    <p className="font-bold text-[#191847] dark:text-white">{fullName}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
+                <div
+                  className="absolute right-0 top-12 w-72 rounded-[4px] border border-[var(--ink-70)] p-2"
+                  style={{ background: "var(--bg-raised)" }}
+                >
+                  <div className="mb-1 border-b border-[var(--ink-70)] px-3 pb-3 pt-2">
+                    <p className="fl-serif italic text-[18px] text-[var(--paper)]">{fullName}</p>
+                    <p className="fl-mono mt-1 truncate text-[11px] text-[var(--ink-30)]">{user.email}</p>
                   </div>
-                  <Link href="/profile" onClick={() => setIsProfileOpen(false)} className="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10">
+                  <Link
+                    href="/profile"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-3 rounded-[3px] px-3 py-2.5 text-[13px] text-[var(--ink-10)] transition-colors hover:bg-[rgba(217,182,92,0.05)] hover:text-[var(--brass)]"
+                  >
                     <IdCard className="h-4 w-4" />
                     Profil Görüntüle
                   </Link>
-                  <Link href="/history" onClick={() => setIsProfileOpen(false)} className="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10">
+                  <Link
+                    href="/history"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-3 rounded-[3px] px-3 py-2.5 text-[13px] text-[var(--ink-10)] transition-colors hover:bg-[rgba(217,182,92,0.05)] hover:text-[var(--brass)]"
+                  >
                     <History className="h-4 w-4" />
                     Analiz Geçmişi
                   </Link>
-                  <Link href="/favorites" onClick={() => setIsProfileOpen(false)} className="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10">
+                  <Link
+                    href="/favorites"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-3 rounded-[3px] px-3 py-2.5 text-[13px] text-[var(--ink-10)] transition-colors hover:bg-[rgba(217,182,92,0.05)] hover:text-[var(--brass)]"
+                  >
                     <Heart className="h-4 w-4" />
                     Favoriler
                   </Link>
-                  <button onClick={handleLogout} className="mt-2 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/10">
+                  <button
+                    onClick={handleLogout}
+                    className="mt-1 flex w-full items-center gap-3 rounded-[3px] px-3 py-2.5 text-[13px] text-[var(--verdict-caution)] transition-colors hover:bg-[rgba(199,147,102,0.08)]"
+                  >
                     <LogOut className="h-4 w-4" />
                     Çıkış Yap
                   </button>
                 </div>
               )}
             </div>
-            <button className="lg:hidden text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 bg-white/60 dark:bg-white/5 rounded-full shadow-[inset_0_1px_2px_rgba(255,255,255,1)]">
-              <Menu className="w-5 h-5" />
-            </button>
           </div>
         </div>
       </motion.nav>
 
       {logoutMessage && (
-        <div className="fixed right-6 top-24 z-[120] rounded-2xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-[#12101a]/95 px-4 py-3 text-sm font-medium text-[#191847] dark:text-white shadow-lg">
+        <div
+          className="fixed right-6 top-20 z-[120] rounded-[4px] border border-[var(--ink-70)] px-4 py-3 fl-mono text-[12px] uppercase tracking-[0.1em] text-[var(--brass)]"
+          style={{ background: "var(--bg-raised)" }}
+        >
           {logoutMessage}
         </div>
       )}

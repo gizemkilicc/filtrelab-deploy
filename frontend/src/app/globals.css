@@ -3,18 +3,71 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #f8f7fa;
-  --foreground: #1e1b4b;
+  /* ── FiltreLAB design system ───────────────────────────── */
+  --ink-100: #0e0d0b;
+  --ink-90: #161512;
+  --ink-70: #2a2823;
+  --ink-50: #56524a;
+  --ink-30: #8f8a80;
+  --ink-10: #c9c4ba;
+  --paper: #efece4;
+  --brass: #d9b65c;
+  --brass-hot: #efce75;
+  --brass-deep: #876130;
+  --verdict-buy: #6a8a78;
+  --verdict-caution: #c79366;
+  --verdict-wait: #6a665d;
+  --easing-curtain: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-serif-ui: var(--font-cormorant), "Cormorant Garamond", Georgia, serif;
+  --font-mono-ui: var(--font-jetbrains), "JetBrains Mono", ui-monospace, monospace;
+  --font-sans-ui: var(--font-space), "Space Grotesk", system-ui, sans-serif;
+
+  /* ── tema yüzeyleri (koyu = varsayılan) ───────────────── */
+  --bg-page: #0a0908;
+  --bg-deep: #0e0d0b;
+  --bg-raised: #161512;
+  --surface: rgba(20, 18, 14, 0.8);
+  --input-bg: rgba(20, 18, 14, 0.5);
+  --input-border: #2a2620;
+  --border-strong: #4a4338;
+  --page-grad: radial-gradient(ellipse 120% 80% at 50% 0%, #161512 0%, #0c0a08 100%);
+
+  /* ── legacy tokens (henüz taşınmamış componentler için) ── */
+  --background: #0a0908;
+  --foreground: #efece4;
   --neon-blue: #60a5fa;
   --neon-purple: #c084fc;
   --neon-pink: #f472b6;
   --neon-green: #4ade80;
-  --bg-card: rgba(255, 255, 255, 0.92);
-  --glass-bg-start: rgba(255, 255, 255, 0.8);
-  --glass-bg-end: rgba(255, 255, 255, 0.3);
-  --glass-border: rgba(255, 255, 255, 0.9);
-  --glass-shadow: rgba(96, 165, 250, 0.05);
-  --bento-shadow: rgba(192, 132, 252, 0.08);
+  --bg-card: rgba(20, 18, 14, 0.8);
+  --glass-bg-start: rgba(255, 255, 255, 0.07);
+  --glass-bg-end: rgba(255, 255, 255, 0.02);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-shadow: rgba(0, 0, 0, 0.4);
+  --bento-shadow: rgba(0, 0, 0, 0.5);
+}
+
+/* ── AÇIK TEMA — html üzerinde .dark sınıfı yokken ──────── */
+html:not(.dark) {
+  --ink-100: #efece4;
+  --ink-90: #e7e1d4;
+  --ink-70: #d4ccba;
+  --ink-50: #a69d8a;
+  --ink-30: #7c7466;
+  --ink-10: #3c372d;
+  --paper: #262420;
+  --brass: #a07f37;
+  --brass-hot: #b8923f;
+
+  --bg-page: #efece4;
+  --bg-deep: #e6e0d2;
+  --bg-raised: #ffffff;
+  --surface: #fbf9f3;
+  --input-bg: #f2eee4;
+  --input-border: #cfc6b3;
+  --border-strong: #bfb49d;
+  --page-grad: radial-gradient(ellipse 120% 80% at 50% 0%, #f7f4ed 0%, #e6e0d2 100%);
 }
 
 .dark {
@@ -37,22 +90,148 @@
   --color-foreground: var(--foreground);
   --color-neon-blue: var(--neon-blue);
   --color-neon-purple: var(--neon-purple);
-  --font-sans: Arial, Helvetica, sans-serif;
-  --font-mono: "Courier New", Courier, monospace;
+  --font-sans: var(--font-sans-ui);
+  --font-mono: var(--font-mono-ui);
+  --font-serif: var(--font-serif-ui);
 }
 
 body {
-  background-color: var(--background);
-  background-image: radial-gradient(circle at 50% 0%, #ffffff 0%, rgba(248, 247, 250, 0) 100%);
-  background-attachment: fixed;
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-page);
+  color: var(--paper);
+  font-family: var(--font-sans-ui), system-ui, sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.4s var(--easing-curtain);
 }
 
-.dark body {
-  background-image: radial-gradient(circle at 50% 0%, #1a0a2e 0%, rgba(9, 6, 15, 0) 100%);
+::selection {
+  background: var(--brass);
+  color: #1a1610;
 }
+
+/* ─────────────────────────────────────────────────────────────
+   FiltreLAB — Design System utilities (editorial / brass)
+   ───────────────────────────────────────────────────────────── */
+.fl-page {
+  min-height: 100vh;
+  background: var(--page-grad);
+  background-attachment: fixed;
+  color: var(--paper);
+}
+
+.fl-serif { font-family: var(--font-serif-ui); }
+.fl-mono { font-family: var(--font-mono-ui); }
+.fl-sans { font-family: var(--font-sans-ui); }
+
+.fl-kicker {
+  font-family: var(--font-mono-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-30);
+}
+
+.fl-card {
+  background: var(--surface);
+  border: 1px solid var(--ink-70);
+  border-radius: 4px;
+}
+
+.fl-card-hover { transition: border-color 0.4s var(--easing-curtain); }
+.fl-card-hover:hover { border-color: var(--brass-deep); }
+
+.fl-btn {
+  font-family: var(--font-mono-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.3s var(--easing-curtain);
+}
+.fl-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fl-btn-primary {
+  background: var(--brass);
+  color: #1a1610;
+  border: 1px solid var(--brass);
+}
+.fl-btn-primary:hover:not(:disabled) {
+  background: var(--brass-hot);
+  border-color: var(--brass-hot);
+}
+
+.fl-btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--ink-10);
+}
+.fl-btn-ghost:hover:not(:disabled) {
+  border-color: var(--brass);
+  color: var(--brass);
+}
+
+.fl-input {
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  padding: 0.75rem 1rem;
+  color: var(--paper);
+  font-family: var(--font-sans-ui);
+  font-size: 15px;
+  transition: border-color 0.3s var(--easing-curtain);
+}
+.fl-input::placeholder { color: var(--ink-30); }
+.fl-input:focus { outline: none; border-color: var(--brass); }
+
+.fl-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0.35rem 0.8rem;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+}
+
+.fl-data-label {
+  font-family: var(--font-mono-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: var(--ink-30);
+}
+.fl-data-value {
+  font-family: var(--font-serif-ui);
+  font-size: 34px;
+  line-height: 1.15;
+  color: var(--paper);
+}
+
+.fl-row {
+  border-top: 1px solid var(--ink-70);
+  transition: background 0.25s var(--easing-curtain);
+}
+.fl-row:hover { background: rgba(217, 182, 92, 0.04); }
+
+.fl-divider { border-top: 1px solid var(--ink-70); }
+
+.fl-link {
+  color: var(--ink-30);
+  transition: color 0.25s var(--easing-curtain);
+}
+.fl-link:hover { color: var(--brass); }
 
 /* Premium Animated Liquid Glass UI */
 .liquid-glass {
@@ -439,12 +618,12 @@ body {
   to { background-position: 300% center; }
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
 ::-webkit-scrollbar-thumb {
-  background: rgba(96, 165, 250, 0.3);
-  border-radius: 10px;
+  background: var(--ink-70);
+  border-radius: 0;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(192, 132, 252, 0.5);
+  background: var(--brass-deep);
 }

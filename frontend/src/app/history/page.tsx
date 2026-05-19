@@ -10,6 +10,14 @@ function isValidImageUrl(url: unknown): url is string {
   return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
 }
 
+function verdictColor(decision: string | null | undefined): string {
+  const d = (decision || "").toLocaleUpperCase("tr-TR");
+  if (d.includes("ALINAB") || d.includes("ÖNER")) return "var(--verdict-buy)";
+  if (d.includes("DİKKAT") || d.includes("KARARSIZ") || d.includes("ORTA")) return "var(--verdict-caution)";
+  if (d.includes("ALMA") || d.includes("UZAK") || d.includes("BEKLE")) return "var(--verdict-wait)";
+  return "var(--ink-30)";
+}
+
 export default function HistoryPage() {
   const [items, setItems] = useState<SavedProduct[]>([]);
   const [message, setMessage] = useState("Yükleniyor...");
@@ -41,41 +49,68 @@ export default function HistoryPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f8f7fa] dark:bg-[#05050a] text-[#191847] dark:text-white p-6 md:p-12">
-      <div className="mx-auto max-w-6xl pt-8">
-        <Link href="/" className="inline-flex items-center text-gray-500 hover:text-[#191847] dark:text-gray-400 dark:hover:text-white transition-colors mb-8">
-          <ArrowLeft className="w-5 h-5 mr-2" />
+    <main className="fl-page px-6 py-14 md:px-12">
+      <div className="mx-auto max-w-5xl">
+        <Link href="/" className="fl-link mb-10 inline-flex items-center fl-mono text-[11px] uppercase tracking-[0.14em]">
+          <ArrowLeft className="mr-2 h-4 w-4" />
           Ana Sayfaya Dön
         </Link>
-        <h1 className="text-4xl font-black mb-3">Analiz Geçmişi</h1>
-        <p className="text-gray-700 dark:text-gray-300 mb-8">Daha önce analiz ettiğin ürünler burada saklanır.</p>
 
-        {message && <div className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 p-6 text-gray-700 dark:text-gray-300">{message}</div>}
+        <p className="fl-kicker mb-3">EVRE · ANALİZ ARŞİVİ</p>
+        <h1 className="fl-serif text-[56px] leading-[1.02] text-[var(--paper)]">Analiz Geçmişi</h1>
+        <p className="fl-sans mt-3 text-[15px] text-[var(--ink-30)]">
+          Daha önce analiz ettiğin ürünler burada saklanır.
+        </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {items.map((item) => (
-            <div key={item.id} className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 p-5 flex gap-4">
-              <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-white">
-                {isValidImageUrl(item.image) ? (
-                  <Image src={item.image} alt={item.productName} fill className="object-contain p-2" sizes="96px" />
-                ) : (
-                  <div className="h-full w-full bg-white/10" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 className="font-bold leading-tight mb-2">{item.productName}</h2>
-                <p className="text-sm text-[var(--neon-blue)] font-bold">{item.price || "Fiyat yok"}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  {item.finalDecision || "Karar yok"} · Güven: {item.trustScore ?? "veri yok"}
-                </p>
-                <button onClick={() => removeItem(item.id)} className="mt-3 inline-flex items-center gap-2 text-sm text-red-600 dark:text-red-300 hover:text-red-700 dark:hover:text-red-200">
+        {message && (
+          <div className="mt-10 fl-card p-6 fl-sans text-[14px] text-[var(--ink-30)]">{message}</div>
+        )}
+
+        {items.length > 0 && (
+          <div className="mt-10 border-b border-[var(--ink-70)]">
+            {items.map((item) => (
+              <div key={item.id} className="fl-row flex items-center gap-5 px-2 py-5">
+                <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden border border-[var(--ink-70)] bg-[var(--bg-deep)]">
+                  {isValidImageUrl(item.image) ? (
+                    <Image src={item.image} alt={item.productName} fill className="object-contain p-2" sizes="80px" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center fl-mono text-[9px] uppercase tracking-[0.1em] text-[var(--ink-50)]">
+                      Görsel Yok
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <h2 className="fl-serif italic text-[21px] leading-snug text-[var(--paper)]">
+                    {item.productName}
+                  </h2>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <span className="fl-mono text-[13px] text-[var(--brass)]">
+                      {item.price || "FİYAT YOK"}
+                    </span>
+                    <span
+                      className="fl-pill"
+                      style={{ color: verdictColor(item.finalDecision) }}
+                    >
+                      {item.finalDecision || "KARAR YOK"}
+                    </span>
+                    <span className="fl-mono text-[11px] uppercase tracking-[0.1em] text-[var(--ink-30)]">
+                      Güven: {item.trustScore ?? "—"}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => removeItem(item.id)}
+                  aria-label="Sil"
+                  className="flex flex-shrink-0 items-center justify-center rounded-[3px] border border-[var(--border-strong)] p-2 text-[var(--ink-30)] transition-colors hover:border-[var(--verdict-caution)] hover:text-[var(--verdict-caution)]"
+                >
                   <Trash2 className="h-4 w-4" />
-                  Sil
                 </button>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );

@@ -56,22 +56,10 @@ interface CrossPlatformPricesProps {
 
 // ─── Platform config ─────────────────────────────────────────────────────────
 
-const PLATFORM_CONFIG: Record<string, { name: string; accentColor: string; badgeClass: string }> = {
-  trendyol: {
-    name: "Trendyol",
-    accentColor: "#F27A1A",
-    badgeClass: "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-700/40",
-  },
-  amazon_tr: {
-    name: "Amazon TR",
-    accentColor: "#FF9900",
-    badgeClass: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-700/40",
-  },
-  hepsiburada: {
-    name: "Hepsiburada",
-    accentColor: "#FF6000",
-    badgeClass: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-700/40",
-  },
+const PLATFORM_CONFIG: Record<string, { name: string }> = {
+  trendyol: { name: "Trendyol" },
+  amazon_tr: { name: "Amazon TR" },
+  hepsiburada: { name: "Hepsiburada" },
 };
 
 const CONFIDENCE_LABEL: Record<string, string> = {
@@ -151,11 +139,7 @@ function PlatformCard({
   cheapestPlatform: string | null;
   mostExpensivePlatform: string | null;
 }) {
-  const cfg = PLATFORM_CONFIG[platformKey] ?? {
-    name: platformKey,
-    accentColor: "#888",
-    badgeClass: "bg-gray-100 text-gray-700 border-gray-200",
-  };
+  const cfg = PLATFORM_CONFIG[platformKey] ?? { name: platformKey };
   const isCheapest = cheapestPlatform === platformKey;
   const isMostExpensive = mostExpensivePlatform === platformKey && mostExpensivePlatform !== cheapestPlatform;
 
@@ -179,45 +163,52 @@ function PlatformCard({
     }
   }
 
+  const borderColor = isCheapest
+    ? "var(--verdict-buy)"
+    : isMostExpensive
+    ? "var(--verdict-caution)"
+    : "var(--ink-70)";
+
   // Platform badge — clickable when there's a product URL
   const badgeEl = (
-    <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${cfg.badgeClass}`}>
+    <span className="fl-mono text-[12px] uppercase tracking-[0.1em] text-[var(--paper)]">
       {cfg.name}
     </span>
   );
   const platformBadge = productUrl ? (
-    <Link href={productUrl} target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">
+    <Link href={productUrl} target="_blank" rel="noopener noreferrer" className="transition-opacity hover:opacity-70">
       {badgeEl}
     </Link>
   ) : badgeEl;
 
   return (
     <div
-      className={`relative min-w-0 flex-1 rounded-2xl border p-4 flex flex-col gap-3 transition-all ${
-        isCheapest
-          ? "border-green-400/50 dark:border-green-500/40 bg-green-50/60 dark:bg-green-950/20 shadow-sm"
-          : isMostExpensive
-          ? "border-red-400/50 dark:border-red-500/40 bg-red-50/40 dark:bg-red-950/10"
-          : "border-black/10 dark:border-white/10 bg-white/60 dark:bg-white/5"
-      }`}
+      className="relative flex min-w-0 flex-1 flex-col gap-3 rounded-[4px] border p-4"
+      style={{ borderColor, background: "var(--surface)" }}
     >
       {/* Header row: platform badge + status tags */}
       <div className="flex items-center justify-between gap-2">
         {platformBadge}
-        <div className="flex gap-1.5 flex-wrap justify-end">
+        <div className="flex flex-wrap justify-end gap-1.5">
           {isSource && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700/40 font-medium whitespace-nowrap">
+            <span className="fl-mono text-[9px] uppercase tracking-[0.1em] text-[var(--ink-30)]">
               Şu an
             </span>
           )}
           {isCheapest && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700/40 font-bold flex items-center gap-1 whitespace-nowrap">
-              <TrendingDown className="w-3 h-3" /> En Ucuz
+            <span
+              className="flex items-center gap-1 fl-mono text-[9px] uppercase tracking-[0.1em]"
+              style={{ color: "var(--verdict-buy)" }}
+            >
+              <TrendingDown className="h-3 w-3" /> En Ucuz
             </span>
           )}
           {isMostExpensive && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700/40 font-bold flex items-center gap-1 whitespace-nowrap">
-              <TrendingUp className="w-3 h-3" /> En Pahalı
+            <span
+              className="flex items-center gap-1 fl-mono text-[9px] uppercase tracking-[0.1em]"
+              style={{ color: "var(--verdict-caution)" }}
+            >
+              <TrendingUp className="h-3 w-3" /> En Pahalı
             </span>
           )}
         </div>
@@ -227,7 +218,7 @@ function PlatformCard({
         <>
           {/* Product image */}
           {isValidImage(productImage) && (
-            <div className="relative mx-auto h-20 w-20 rounded-xl overflow-hidden bg-white dark:bg-neutral-800">
+            <div className="relative mx-auto h-20 w-20 overflow-hidden border border-[var(--ink-70)] bg-[var(--bg-deep)]">
               <Image
                 src={productImage}
                 alt={productName || ""}
@@ -245,12 +236,12 @@ function PlatformCard({
                 href={productUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 leading-snug hover:underline"
+                className="fl-sans text-[12px] leading-snug text-[var(--ink-30)] line-clamp-2 hover:text-[var(--brass)]"
               >
                 {productName}
               </Link>
             ) : (
-              <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 leading-snug">
+              <p className="fl-sans text-[12px] leading-snug text-[var(--ink-30)] line-clamp-2">
                 {productName}
               </p>
             )
@@ -258,14 +249,13 @@ function PlatformCard({
 
           {/* Price row */}
           <div className="flex flex-col gap-1">
-            <span className="text-2xl font-black leading-tight" style={{ color: cfg.accentColor }}>
+            <span className="fl-serif text-[28px] leading-tight text-[var(--brass)]">
               {priceDisplay ?? "—"}
             </span>
             {priceDiffLabel && (
               <span
-                className={`text-xs font-bold ${
-                  priceDiffPositive ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
-                }`}
+                className="fl-mono text-[11px]"
+                style={{ color: priceDiffPositive ? "var(--verdict-buy)" : NEGATIVE_RED }}
               >
                 {priceDiffLabel}
               </span>
@@ -273,15 +263,15 @@ function PlatformCard({
           </div>
 
           {/* Confidence indicator + Ürüne Git button */}
-          <div className="flex flex-col items-stretch mt-auto gap-2">
+          <div className="mt-auto flex flex-col items-stretch gap-2">
             {!isSource && match?.confidence && match.confidence !== "not_found" && (
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex shrink-0 items-center gap-1">
                 {match.confidence === "high" ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                  <CheckCircle2 className="h-3.5 w-3.5" style={{ color: "var(--verdict-buy)" }} />
                 ) : (
-                  <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+                  <AlertTriangle className="h-3.5 w-3.5" style={{ color: "var(--verdict-caution)" }} />
                 )}
-                <span className="text-xs text-gray-500 dark:text-gray-400">
+                <span className="fl-mono text-[10px] uppercase tracking-[0.08em] text-[var(--ink-30)]">
                   {CONFIDENCE_LABEL[match.confidence]}
                 </span>
               </div>
@@ -291,14 +281,9 @@ function PlatformCard({
                 href={productUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-1.5 text-xs font-bold px-3 py-2 rounded-lg border transition-colors hover:opacity-80"
-                style={{
-                  color: cfg.accentColor,
-                  borderColor: cfg.accentColor + "44",
-                  backgroundColor: cfg.accentColor + "12",
-                }}
+                className="flex w-full items-center justify-center gap-1.5 rounded-[3px] border border-[var(--border-strong)] px-3 py-2 fl-mono text-[10px] uppercase tracking-[0.1em] text-[var(--ink-10)] transition-colors hover:border-[var(--brass)] hover:text-[var(--brass)]"
               >
-                <ExternalLink className="w-3 h-3" />
+                <ExternalLink className="h-3 w-3" />
                 Ürüne Git
               </Link>
             )}
@@ -306,22 +291,22 @@ function PlatformCard({
 
           {/* Variant warning (soft match) or generic low-confidence note */}
           {!isSource && match?.variant_warning && (
-            <p className="text-xs text-yellow-600 dark:text-yellow-400 flex items-start gap-1 mt-1">
-              <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+            <p className="mt-1 flex items-start gap-1 fl-sans text-[11px]" style={{ color: "var(--verdict-caution)" }}>
+              <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
               <span>Bu tam varyant satılmıyor: {match.variant_warning}. Benzer ürün gösteriliyor.</span>
             </p>
           )}
           {!isSource && match?.confidence === "low" && !match?.variant_warning && (
-            <p className="text-xs text-yellow-600 dark:text-yellow-400 flex items-center gap-1 mt-1">
-              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+            <p className="mt-1 flex items-center gap-1 fl-sans text-[11px]" style={{ color: "var(--verdict-caution)" }}>
+              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
               Ürün farklı olabilir — kontrol edin
             </p>
           )}
         </>
       ) : (
         <div className="flex flex-col items-center justify-center gap-2 py-4 text-center">
-          <XCircle className="w-8 h-8 text-gray-300 dark:text-gray-600" />
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <XCircle className="h-8 w-8 text-[var(--ink-50)]" />
+          <p className="fl-sans text-[13px] text-[var(--ink-30)]">
             {match?.not_found_reason ?? "Bu platformda bulunamadı"}
           </p>
         </div>
@@ -329,6 +314,8 @@ function PlatformCard({
     </div>
   );
 }
+
+const NEGATIVE_RED = "#9c5b4d";
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -350,8 +337,6 @@ export function CrossPlatformPrices({
 
   // After data loads, prefer backend source_price (already a float) when prop
   // couldn't be parsed (e.g. "118.999 TL" dot-only format before the fix).
-  // data?.source_price is the float the backend received from the frontend, so
-  // it's only better when it was passed correctly.  Fall back to prop.
   const sourcePrice = (data?.source_price && data.source_price > 0)
     ? data.source_price
     : sourcePriceFromProp;
@@ -366,7 +351,6 @@ export function CrossPlatformPrices({
     setError(null);
 
     // Distinguish real timeout aborts from cleanup aborts.
-    // Cleanup-caused aborts must NOT show an error.
     const isTimeoutAbort = { value: false };
     const controller = new AbortController();
     const timeout = setTimeout(() => {
@@ -434,33 +418,27 @@ export function CrossPlatformPrices({
     ? (sourceUrl ?? null)
     : (cheapestMatch?.product_url ?? null);
 
-  const mostExpensiveCfg   = data?.most_expensive_platform ? PLATFORM_CONFIG[data.most_expensive_platform] : null;
-  const mostExpensiveMatch = data?.most_expensive_platform ? matchByPlatform[data.most_expensive_platform] : null;
-  const mostExpensiveUrl   = data?.most_expensive_platform === normalizedSource
-    ? (sourceUrl ?? null)
-    : (mostExpensiveMatch?.product_url ?? null);
-
   return (
-    <div className={className ?? "mt-10 pt-8 border-t border-white/10"}>
+    <div className={className ?? "fl-divider mt-10 pt-8"}>
       {/* Header */}
-      <h3 className="text-xl font-bold mb-2 flex items-center gap-2">
-        <TrendingDown className="text-green-400" />
-        Platform Fiyat Karşılaştırması
-      </h3>
+      <p className="fl-kicker mb-3">EVRE · PLATFORM FİYAT KARŞILAŞTIRMASI</p>
 
       {/* Summary — bidirectional */}
       {data && data.total_platforms_with_price >= 2 && data.price_difference_max != null && data.price_difference_max > 1 && (
         <div className="mb-5">
           {data.is_source_cheapest ? (
             /* User is on the cheapest platform */
-            <div className="flex items-start gap-2 rounded-xl border border-green-300 dark:border-green-700/50 bg-green-50 dark:bg-green-950/25 px-4 py-3 text-sm text-green-800 dark:text-green-200">
-              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-green-600 dark:text-green-400" />
+            <div
+              className="flex items-start gap-2 rounded-[3px] border px-4 py-3 fl-sans text-[13px]"
+              style={{ borderColor: "var(--verdict-buy)", color: "var(--verdict-buy)" }}
+            >
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 <strong>İyi haber!</strong> Şu an baktığınız platform en ucuzu.
                 {data.savings_amount != null && data.savings_amount > 0 && (
                   <>
                     {" "}Diğer platformlardan{" "}
-                    <strong className="text-green-700 dark:text-green-300">
+                    <strong>
                       {formatPrice(data.savings_amount)}
                       {data.savings_percentage != null && ` (%${data.savings_percentage.toFixed(1)})`}
                     </strong>{" "}daha ucuz.
@@ -470,8 +448,11 @@ export function CrossPlatformPrices({
             </div>
           ) : (
             /* User is paying more — show cheapest alternative */
-            <div className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/25 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div
+              className="flex items-start gap-2 rounded-[3px] border px-4 py-3 fl-sans text-[13px]"
+              style={{ borderColor: "var(--verdict-caution)", color: "var(--verdict-caution)" }}
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 <strong>Dikkat!</strong>{" "}
                 {cheapestCfg && (
@@ -481,16 +462,15 @@ export function CrossPlatformPrices({
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-bold underline underline-offset-2 hover:opacity-80"
-                      style={{ color: cheapestCfg.accentColor }}
                     >
-                      {cheapestCfg.name} <ExternalLink className="inline w-3 h-3 mb-0.5" />
+                      {cheapestCfg.name} <ExternalLink className="mb-0.5 inline h-3 w-3" />
                     </Link>
                   ) : (
-                    <strong style={{ color: cheapestCfg.accentColor }}>{cheapestCfg.name}</strong>
+                    <strong>{cheapestCfg.name}</strong>
                   )
                 )}{" "}platformunda{" "}
                 {data.savings_amount != null && (
-                  <strong className="text-red-600 dark:text-red-400">
+                  <strong>
                     {formatPrice(Math.abs(data.savings_amount))}
                     {data.savings_percentage != null && ` (%${Math.abs(data.savings_percentage).toFixed(1)})`}
                   </strong>
@@ -501,17 +481,17 @@ export function CrossPlatformPrices({
 
           {/* Price ranking row */}
           {data.cheapest_platform && data.most_expensive_platform && data.cheapest_platform !== data.most_expensive_platform && (
-            <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 px-1 text-xs text-gray-500 dark:text-gray-400">
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 px-1 fl-mono text-[10px] uppercase tracking-[0.08em] text-[var(--ink-30)]">
               <span>
                 En ucuz:{" "}
-                <strong className="text-green-700 dark:text-green-400">
+                <strong style={{ color: "var(--verdict-buy)" }}>
                   {PLATFORM_CONFIG[data.cheapest_platform]?.name ?? data.cheapest_platform}
                 </strong>
                 {data.cheapest_price != null && <> — {formatPrice(data.cheapest_price)}</>}
               </span>
               <span>
                 En pahalı:{" "}
-                <strong className="text-red-700 dark:text-red-400">
+                <strong style={{ color: "var(--verdict-caution)" }}>
                   {PLATFORM_CONFIG[data.most_expensive_platform]?.name ?? data.most_expensive_platform}
                 </strong>
                 {data.most_expensive_price != null && <> — {formatPrice(data.most_expensive_price)}</>}
@@ -521,22 +501,24 @@ export function CrossPlatformPrices({
         </div>
       )}
       {data && data.total_platforms_with_price >= 2 && data.price_difference_max !== null && data.price_difference_max <= 1 && (
-        <p className="text-sm mb-5 text-gray-500 dark:text-gray-400">
+        <p className="mb-5 fl-sans text-[13px] text-[var(--ink-30)]">
           Platformlar arasında anlamlı fiyat farkı yok.
         </p>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center gap-3 py-8 text-gray-500 dark:text-gray-400">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="text-sm">Diğer platformlarda aranıyor… (30–60 sn sürebilir)</span>
+        <div className="flex items-center gap-3 py-8 text-[var(--ink-30)]">
+          <Loader2 className="h-4 w-4 animate-spin text-[var(--brass)]" />
+          <span className="fl-mono text-[11px] uppercase tracking-[0.1em]">
+            Diğer platformlarda aranıyor… (30–60 sn sürebilir)
+          </span>
         </div>
       )}
 
       {/* Error — only when no data to show */}
       {!loading && error && !data && (
-        <p className="text-sm text-red-500 dark:text-red-400 py-4">{error}</p>
+        <p className="py-4 fl-sans text-[13px]" style={{ color: NEGATIVE_RED }}>{error}</p>
       )}
 
       {/* Platform cards */}

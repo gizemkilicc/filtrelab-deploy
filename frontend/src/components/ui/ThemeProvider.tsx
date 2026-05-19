@@ -10,17 +10,17 @@ type ThemeContextValue = {
 };
 
 const ThemeContext = React.createContext<ThemeContextValue>({
-  theme: "light",
+  theme: "dark",
   setTheme: () => undefined,
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = React.useState<Theme>("light");
+  const [theme, setThemeState] = React.useState<Theme>("dark");
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
       const stored = window.localStorage.getItem("theme");
-      setThemeState(stored === "dark" ? "dark" : "light");
+      setThemeState(stored === "light" ? "light" : "dark");
     }, 0);
 
     return () => window.clearTimeout(timer);

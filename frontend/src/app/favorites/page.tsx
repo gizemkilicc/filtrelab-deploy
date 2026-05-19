@@ -41,44 +41,70 @@ export default function FavoritesPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f8f7fa] dark:bg-[#05050a] text-[#191847] dark:text-white p-6 md:p-12">
-      <div className="mx-auto max-w-6xl pt-8">
-        <Link href="/" className="inline-flex items-center text-gray-500 hover:text-[#191847] dark:text-gray-400 dark:hover:text-white transition-colors mb-8">
-          <ArrowLeft className="w-5 h-5 mr-2" />
+    <main className="fl-page px-6 py-14 md:px-12">
+      <div className="mx-auto max-w-5xl">
+        <Link href="/" className="fl-link mb-10 inline-flex items-center fl-mono text-[11px] uppercase tracking-[0.14em]">
+          <ArrowLeft className="mr-2 h-4 w-4" />
           Ana Sayfaya Dön
         </Link>
-        <h1 className="text-4xl font-black mb-3">Favori Listesi</h1>
-        <p className="text-gray-700 dark:text-gray-300 mb-8">Beğendiğin ürünleri buradan tekrar inceleyebilirsin.</p>
 
-        {message && <div className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 p-6 text-gray-700 dark:text-gray-300">{message}</div>}
+        <p className="fl-kicker mb-3">EVRE · FAVORİLER</p>
+        <h1 className="fl-serif text-[56px] leading-[1.02] text-[var(--paper)]">Favori Listesi</h1>
+        <p className="fl-sans mt-3 text-[15px] text-[var(--ink-30)]">
+          Beğendiğin ürünleri buradan tekrar inceleyebilirsin.
+        </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {items.map((item) => (
-            <div key={item.id} className="rounded-3xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 p-5 flex gap-4">
-              <div className="relative h-24 w-24 flex-shrink-0 overflow-hidden rounded-2xl bg-white">
-                {isValidImageUrl(item.image) ? (
-                  <Image src={item.image} alt={item.productName} fill className="object-contain p-2" sizes="96px" />
-                ) : (
-                  <div className="h-full w-full bg-white/10" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <h2 className="font-bold leading-tight mb-2">{item.productName}</h2>
-                <p className="text-sm text-[var(--neon-blue)] font-bold">{item.price || "Fiyat yok"}</p>
-                <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                  <Link href={item.productUrl || "#"} target="_blank" className="inline-flex items-center gap-2 text-[var(--neon-blue)] hover:opacity-80">
-                    <ExternalLink className="h-4 w-4" />
+        {message && (
+          <div className="mt-10 fl-card p-6 fl-sans text-[14px] text-[var(--ink-30)]">{message}</div>
+        )}
+
+        {items.length > 0 && (
+          <div className="mt-10 border-b border-[var(--ink-70)]">
+            {items.map((item) => (
+              <div
+                key={item.id}
+                className="fl-row flex items-center gap-5 px-2 py-5"
+              >
+                <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden border border-[var(--ink-70)] bg-[var(--bg-deep)]">
+                  {isValidImageUrl(item.image) ? (
+                    <Image src={item.image} alt={item.productName} fill className="object-contain p-2" sizes="80px" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center fl-mono text-[9px] uppercase tracking-[0.1em] text-[var(--ink-50)]">
+                      Görsel Yok
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <h2 className="fl-serif italic text-[21px] leading-snug text-[var(--paper)]">
+                    {item.productName}
+                  </h2>
+                  <p className="fl-mono mt-1.5 text-[13px] text-[var(--brass)]">
+                    {item.price || "FİYAT YOK"}
+                  </p>
+                </div>
+
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <Link
+                    href={item.productUrl || "#"}
+                    target="_blank"
+                    className="flex items-center gap-2 rounded-[3px] border border-[var(--border-strong)] px-3 py-2 fl-mono text-[11px] uppercase tracking-[0.1em] text-[var(--ink-10)] transition-colors hover:border-[var(--brass)] hover:text-[var(--brass)]"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
                     Ürüne Git
                   </Link>
-                  <button onClick={() => removeItem(item.id)} className="inline-flex items-center gap-2 text-red-600 dark:text-red-300 hover:text-red-700 dark:hover:text-red-200">
+                  <button
+                    onClick={() => removeItem(item.id)}
+                    aria-label="Sil"
+                    className="flex items-center justify-center rounded-[3px] border border-[var(--border-strong)] p-2 text-[var(--ink-30)] transition-colors hover:border-[var(--verdict-caution)] hover:text-[var(--verdict-caution)]"
+                  >
                     <Trash2 className="h-4 w-4" />
-                    Sil
                   </button>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );
