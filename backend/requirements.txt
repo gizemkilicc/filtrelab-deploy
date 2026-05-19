@@ -19,3 +19,4 @@ alembic>=1.13
 
 # AWS (Comprehend duygu analizi)
 boto3>=1.34
+boto3
