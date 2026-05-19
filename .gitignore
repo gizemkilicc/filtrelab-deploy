@@ -46,3 +46,5 @@ next-env.d.ts
 .next/ 
 frontend/.next/
 .next/
+__pycache__/
+*.pyc
