@@ -1,21 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Bell, History, Heart, Bot, ArrowRight } from "lucide-react";
+import { History, Heart, Bot, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { AuthModal } from "./AuthModal";
 import Link from "next/link";
 
 const features = [
-  {
-    icon: Bell,
-    title: "Fiyat Takibi",
-    description: "Ürün ucuzlayınca sana haber verelim",
-    color: "text-cyan-500 dark:text-cyan-400",
-    bg: "bg-cyan-500/10",
-    border: "border-cyan-500/15",
-    href: "/price-tracking",
-  },
   {
     icon: History,
     title: "Analiz Geçmişi",
@@ -81,7 +72,7 @@ export function PremiumCTA() {
                 </h2>
 
                 <p className="mt-5 text-[16px] leading-7 text-gray-500 dark:text-gray-400">
-                  Ücretsiz hesap oluşturarak fiyat takibi, analiz geçmişi ve kişisel AI önerileri gibi güçlü özelliklere erişim sağla.
+                  Ücretsiz hesap oluşturarak analiz geçmişi, favori listesi ve kişisel AI önerileri gibi güçlü özelliklere erişim sağla.
                 </p>
 
                 <button

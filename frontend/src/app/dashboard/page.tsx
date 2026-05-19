@@ -8,9 +8,6 @@ import {
   addFavorite,
   deleteFavorite,
   getFavorites,
-  addPriceTracking,
-  deletePriceTracking,
-  getPriceTracking,
   addAnalysisHistory,
   type AIAnalysisResult,
 } from "@/lib/apiClient";
@@ -21,7 +18,7 @@ import { ScanTimeline } from "@/components/ui/ScanTimeline";
 import { CrossPlatformPrices } from "@/components/CrossPlatformPrices";
 import { ReviewIntelligence } from "@/components/ReviewIntelligence";
 import { ShoppingPersonality } from "@/components/ShoppingPersonality";
-import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Bell, Heart, Loader2 } from "lucide-react";
+import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Heart, Loader2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -61,10 +58,8 @@ function DashboardContent() {
   const [error, setError] = useState<string | null>(null);
   const [featureMessage, setFeatureMessage] = useState<string | null>(null);
   const [favoriteId, setFavoriteId] = useState<number | null>(null);
-  const [trackingId, setTrackingId] = useState<number | null>(null);
   const [statusChecked, setStatusChecked] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
-  const [trackBusy, setTrackBusy] = useState(false);
   type StepStatus = "pending" | "scanning" | "completed";
   const [timelineSteps, setTimelineSteps] = useState<{ id: number; message: string; status: StepStatus }[]>([
     { id: 1, message: "Link alındı", status: "pending" },
@@ -122,21 +117,17 @@ function DashboardContent() {
     return () => { mounted = false; };
   }, [url]);
 
-  // Ürün açıldığında favori / fiyat takibi durumunu kontrol et.
+  // Ürün açıldığında favori durumunu kontrol et.
   useEffect(() => {
     if (!result) return;
     const productUrl = result.sourceUrl || url;
     let active = true;
     (async () => {
-      const [favRes, trackRes] = await Promise.all([getFavorites(), getPriceTracking()]);
+      const favRes = await getFavorites();
       if (!active) return;
       if (favRes.success) {
         const match = favRes.data.items?.find((it) => it.productUrl === productUrl);
         setFavoriteId(match ? match.id : null);
-      }
-      if (trackRes.success) {
-        const match = trackRes.data.items?.find((it) => it.productUrl === productUrl);
-        setTrackingId(match ? match.id : null);
       }
       setStatusChecked(true);
     })();
@@ -201,36 +192,6 @@ function DashboardContent() {
   }
 
   if (!result) return null;
-
-  const handleTogglePriceTracking = async () => {
-    if (!result || trackBusy) return;
-    setTrackBusy(true);
-    if (trackingId !== null) {
-      const res = await deletePriceTracking(trackingId);
-      if (res.success) {
-        setTrackingId(null);
-        setFeatureMessage("Fiyat takibinden çıkarıldı.");
-      } else {
-        setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "İşlem başarısız.");
-      }
-    } else {
-      const res = await addPriceTracking({
-        productName: result.productName,
-        productUrl: result.sourceUrl || url,
-        currentPrice: result.price || "0 TL",
-        image: result.image ?? null,
-        platform: result.sourcePlatform ?? null,
-      });
-      if (res.success) {
-        setTrackingId(res.data.item?.id ?? null);
-        setFeatureMessage("Fiyat takibine eklendi!");
-      } else {
-        setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "Giriş yapmalısınız.");
-      }
-    }
-    setTrackBusy(false);
-    setTimeout(() => setFeatureMessage(null), 3000);
-  };
 
   const handleToggleFavorite = async () => {
     if (!result || favBusy) return;
@@ -304,19 +265,11 @@ function DashboardContent() {
                 <h2 className="text-2xl font-bold mb-3 leading-tight">{result.productName}</h2>
                 <div className="text-3xl font-black text-[var(--neon-blue)] neon-text-blue mb-4">{result.price}</div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  <button
-                    onClick={handleTogglePriceTracking}
-                    disabled={!statusChecked || trackBusy}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--neon-blue)]/30 bg-[var(--neon-blue)]/10 px-4 py-3 text-sm font-bold text-[var(--neon-blue)] hover:bg-[var(--neon-blue)]/15 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    <Bell className="h-4 w-4" />
-                    {trackingId !== null ? "Takipten Çıkar" : "Fiyat Takibine Ekle"}
-                  </button>
+                <div className="mb-4">
                   <button
                     onClick={handleToggleFavorite}
                     disabled={!statusChecked || favBusy}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[var(--neon-pink)]/30 bg-[var(--neon-pink)]/10 px-4 py-3 text-sm font-bold text-[var(--neon-pink)] hover:bg-[var(--neon-pink)]/15 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--neon-pink)]/30 bg-[var(--neon-pink)]/10 px-4 py-3 text-sm font-bold text-[var(--neon-pink)] hover:bg-[var(--neon-pink)]/15 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <Heart className={`h-4 w-4 ${favoriteId !== null ? "fill-current" : ""}`} />
                     {favoriteId !== null ? "Favorilerden Kaldır" : "Favorilere Ekle"}

@@ -25,7 +25,6 @@ load_dotenv()
 
 from routes import analyze
 from routes import auth as auth_router
-from routes import chat as chat_router
 from routes import user_features
 from routes import reviews as reviews_router
 from routes import cross_platform as cross_platform_router
@@ -56,7 +55,6 @@ app.add_middleware(
 
 app.include_router(analyze.router)
 app.include_router(auth_router.router)
-app.include_router(chat_router.router)
 app.include_router(user_features.router)
 app.include_router(reviews_router.router)
 app.include_router(cross_platform_router.router)

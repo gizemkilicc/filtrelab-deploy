@@ -99,11 +99,6 @@ export type SimpleAuthResponse =
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-export type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-
 export type SavedProduct = {
   id: number;
   productName: string;
@@ -369,61 +364,7 @@ export function logoutUser(): void {
   }
 }
 
-// ── Chat ─────────────────────────────────────────────────────────────────────
-
-export async function chatWithAssistant(
-  message: string,
-  analysis: AIAnalysisResult | null,
-  history: ChatMessage[]
-): Promise<{ success: true; reply: string; intent?: string; preferences?: Record<string, boolean> } | { success: false; error: string }> {
-  try {
-    const res = await fetch(`${API_URL}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        analysis,
-        history: history.slice(-12),
-      }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.success === false) {
-      return { success: false, error: json.detail || json.error || "Yanıt oluşturulamadı." };
-    }
-    return {
-      success: true,
-      reply: json.reply || "Şu anda yanıt oluşturamadım, tekrar dener misin?",
-      intent: json.intent,
-      preferences: json.preferences,
-    };
-  } catch {
-    return { success: false, error: "Şu anda yanıt oluşturamadım, tekrar dener misin?" };
-  }
-}
-
 // ── User features ────────────────────────────────────────────────────────────
-
-export async function addPriceTracking(item: {
-  productName: string;
-  productUrl: string;
-  currentPrice: string;
-  targetPrice?: string;
-  image?: string | null;
-  platform?: string | null;
-}) {
-  return featureRequest<{ success: boolean; item: SavedProduct }>("/price-tracking", {
-    method: "POST",
-    body: JSON.stringify(item),
-  });
-}
-
-export async function getPriceTracking() {
-  return featureRequest<{ success: boolean; items: SavedProduct[] }>("/price-tracking");
-}
-
-export async function deletePriceTracking(id: number) {
-  return featureRequest<{ success: boolean }>(`/price-tracking/${id}`, { method: "DELETE" });
-}
 
 export async function addAnalysisHistory(item: {
   productName: string;

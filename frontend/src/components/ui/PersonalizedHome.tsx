@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
-  Bell,
   BrainCircuit,
   Heart,
   History,
@@ -23,7 +22,6 @@ import {
   getAnalysisHistory,
   getFavorites,
   getMe,
-  getPriceTracking,
   getRecommendations,
   type AuthUser,
   type Recommendation,
@@ -34,22 +32,12 @@ type PersonalizedHomeProps = {
 };
 
 type Counts = {
-  tracking: number;
   history: number;
   favorites: number;
   recommendations: number;
 };
 
 const featureCards = [
-  {
-    title: "Fiyat takibi",
-    text: "Bu ürün ucuzlayınca haber ver",
-    href: "/price-tracking",
-    countKey: "tracking" as const,
-    icon: Bell,
-    accent: "text-sky-600 dark:text-sky-300",
-    bg: "bg-sky-50 dark:bg-sky-500/10",
-  },
   {
     title: "Analiz geçmişi",
     text: "Daha önce baktığın ürünler kayıtlı kalsın",
@@ -182,7 +170,6 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
   const [loading, setLoading] = useState(true);
   const [productUrl, setProductUrl] = useState("");
   const [counts, setCounts] = useState<Counts>({
-    tracking: 0,
     history: 0,
     favorites: 0,
     recommendations: 0,
@@ -206,8 +193,7 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
 
         if (!currentUser) return;
 
-        const [trackingRes, historyRes, favoritesRes, recommendationsRes] = await Promise.all([
-          getPriceTracking(),
+        const [historyRes, favoritesRes, recommendationsRes] = await Promise.all([
           getAnalysisHistory(),
           getFavorites(),
           getRecommendations(),
@@ -215,7 +201,6 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
 
         if (!mounted) return;
         setCounts({
-          tracking: trackingRes.success ? trackingRes.data.items.length : 0,
           history: historyRes.success ? historyRes.data.items.length : 0,
           favorites: favoritesRes.success ? favoritesRes.data.items.length : 0,
           recommendations: recommendationsRes.success ? recommendationsRes.data.recommendations.length : 0,
@@ -367,7 +352,7 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
             </div>
           ) : (
             <p className="text-gray-600 dark:text-gray-300">
-              İlk favori, fiyat takibi veya analiz kaydından sonra önerilerin burada görünecek.
+              İlk favori veya analiz kaydından sonra önerilerin burada görünecek.
             </p>
           )}
         </div>
@@ -378,12 +363,9 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
             <h2 className="text-2xl font-black">Bugünkü odak</h2>
           </div>
           <p className="text-gray-600 dark:text-gray-300">
-            Takibe aldığın ürünleri, favorilerini ve analiz geçmişini aynı yerden yönetebilirsin.
+            Favorilerini ve analiz geçmişini aynı yerden yönetebilirsin.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link href="/price-tracking" className="rounded-full border border-black/10 px-4 py-2 text-sm font-bold hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10">
-              Fiyat takibine git
-            </Link>
             <Link href="/history" className="rounded-full border border-black/10 px-4 py-2 text-sm font-bold hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10">
               Geçmişi aç
             </Link>

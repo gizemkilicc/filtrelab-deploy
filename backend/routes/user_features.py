@@ -9,21 +9,11 @@ from services.auth_service import decode_access_token, get_user_by_id
 from services.database import (
     AnalysisHistory,
     Favorite,
-    PriceTracking,
     User,
     get_db,
 )
 
 router = APIRouter(tags=["user-features"])
-
-
-class PriceTrackingCreate(BaseModel):
-    productName: str
-    productUrl: str
-    currentPrice: str
-    targetPrice: str | None = None
-    image: str | None = None
-    platform: str | None = None
 
 
 class AnalysisHistoryCreate(BaseModel):
@@ -75,19 +65,6 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value else None
 
 
-def _tracking_item(item: PriceTracking) -> dict[str, Any]:
-    return {
-        "id": item.id,
-        "productName": item.product_name,
-        "productUrl": item.product_url,
-        "currentPrice": item.current_price,
-        "targetPrice": item.target_price,
-        "image": item.image,
-        "platform": item.platform,
-        "createdAt": _iso(item.created_at),
-    }
-
-
 def _history_item(item: AnalysisHistory) -> dict[str, Any]:
     return {
         "id": item.id,
@@ -115,48 +92,6 @@ def _favorite_item(item: Favorite) -> dict[str, Any]:
         "platform": item.platform,
         "createdAt": _iso(item.created_at),
     }
-
-
-@router.post("/price-tracking")
-def add_price_tracking(
-    body: PriceTrackingCreate,
-    user: User = Depends(current_user),
-    db: Session = Depends(get_db),
-):
-    item = PriceTracking(
-        user_id=user.id,
-        product_name=body.productName.strip(),
-        product_url=body.productUrl.strip(),
-        current_price=body.currentPrice.strip(),
-        target_price=body.targetPrice.strip() if body.targetPrice else None,
-        image=body.image,
-        platform=body.platform,
-    )
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-    return {"success": True, "item": _tracking_item(item)}
-
-
-@router.get("/price-tracking")
-def list_price_tracking(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    items = (
-        db.query(PriceTracking)
-        .filter(PriceTracking.user_id == user.id)
-        .order_by(PriceTracking.created_at.desc())
-        .all()
-    )
-    return {"success": True, "items": [_tracking_item(item) for item in items]}
-
-
-@router.delete("/price-tracking/{item_id}")
-def delete_price_tracking(item_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    item = db.query(PriceTracking).filter(PriceTracking.id == item_id, PriceTracking.user_id == user.id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Kayıt bulunamadı.")
-    db.delete(item)
-    db.commit()
-    return {"success": True}
 
 
 @router.post("/analysis-history")
@@ -246,17 +181,16 @@ def delete_favorite(item_id: int, user: User = Depends(current_user), db: Sessio
 def recommendations(user: User = Depends(current_user), db: Session = Depends(get_db)):
     favorites = db.query(Favorite).filter(Favorite.user_id == user.id).all()
     history = db.query(AnalysisHistory).filter(AnalysisHistory.user_id == user.id).all()
-    trackings = db.query(PriceTracking).filter(PriceTracking.user_id == user.id).all()
 
-    if not favorites and not history and not trackings:
+    if not favorites and not history:
         return {
             "success": True,
             "message": "Henüz öneri oluşturmak için yeterli veri yok.",
             "recommendations": [],
         }
 
-    names = [item.product_name for item in favorites + history + trackings if item.product_name]
-    platforms = [item.platform for item in favorites + trackings if item.platform]
+    names = [item.product_name for item in favorites + history if item.product_name]
+    platforms = [item.platform for item in favorites if item.platform]
     common_words = Counter(
         word.lower()
         for name in names
@@ -271,12 +205,6 @@ def recommendations(user: User = Depends(current_user), db: Session = Depends(ge
             "title": "Favorilerine yakın ürünleri karşılaştır",
             "description": "Favoriye aldığın ürünleri fiyat, yorum güveni ve iade riskiyle tekrar karşılaştırman mantıklı olur.",
             "source": _favorite_item(favorites[-1]),
-        })
-    if trackings:
-        recommendations_list.append({
-            "title": "Fiyat alarmındaki ürünleri takip et",
-            "description": "Fiyat takibindeki ürünlerde hedef fiyata yaklaşanları önce değerlendir.",
-            "source": _tracking_item(trackings[-1]),
         })
     if history:
         phrase = ", ".join(top_terms) if top_terms else "benzer ürünler"
