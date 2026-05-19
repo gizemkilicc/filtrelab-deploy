@@ -156,4 +156,7 @@ def parse_tr_price(raw) -> float | None:
 
     if float_val <= 0:
         return None
+    # Sanity range: 1 TL – 1,000,000 TL
+    if not (1 < float_val < 1_000_000):
+        return None
     return float_val

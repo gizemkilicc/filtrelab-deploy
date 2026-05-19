@@ -167,6 +167,11 @@ def _get_cached(key: str) -> dict | None:
 
 
 def _set_cached(key: str, data: dict) -> None:
+    # Don't cache all-empty results — transient scraper failure may have caused them
+    matches = data.get("matches", [])
+    if matches and all(not m.get("found") for m in matches):
+        print(f"[cross] skipping cache (all not-found) key={key!r}")
+        return
     _CACHE[key] = (time.time(), data)
     if len(_CACHE) > 500:
         cutoff = time.time() - _CACHE_TTL
@@ -309,6 +314,14 @@ def _prefilter_candidate(
     if not cand_name or not cand_name.strip():
         return False, "empty name"
 
+    # Marka kontrolü: kaynak ürünün ilk kelimesi adayda yoksa REDDET
+    source_words = source_name.lower().split()
+    candidate_name_lower = cand_name.lower()
+    if source_words and len(source_words[0]) > 3:
+        first_word = source_words[0]
+        if first_word not in candidate_name_lower:
+            return False, f"brand_first_word_missing: {first_word}"
+
     src = _extract_strong_signals(source_name)
     cnd = _extract_strong_signals(cand_name)
 
@@ -337,12 +350,6 @@ def _prefilter_candidate(
     # ── HARD REJECT 4: explicit pan/pot cm size mismatch ─────────────────────
     if src['size_cm'] and cnd['size_cm'] and src['size_cm'] != cnd['size_cm']:
         return False, f"size_cm: {src['size_cm']} vs {cnd['size_cm']}"
-
-    # ── HARD REJECT 5: price 10× apart ───────────────────────────────────────
-    if source_price > 0 and cand_price > 0:
-        ratio = max(source_price, cand_price) / min(source_price, cand_price)
-        if ratio > 10:
-            return False, f"price_ratio: {ratio:.1f}x"
 
     # ── SOFT CHECK: very low token overlap + very low similarity ──────────────
     src_tok = src['tokens']
@@ -414,6 +421,13 @@ def _match_score(
     except Exception:
         pass
 
+    # KRİTİK KURAL: kaynak ürün adındaki marka (ilk kelime) adayda yoksa MAX 0.3
+    source_first_words = source_name.lower().split()
+    if source_first_words and len(source_first_words[0]) > 3:
+        first_word = source_first_words[0]
+        if first_word not in cand_name.lower():
+            score = min(score, 0.30)
+
     return min(max(score, 0.0), 1.0)
 
 
@@ -426,11 +440,11 @@ def _platform_display_name(platform: str) -> str:
 
 
 def _score_to_confidence(score: float) -> str:
-    if score >= 0.90:
+    if score >= 0.85:
         return "high"
-    if score >= 0.75:
+    if score >= 0.65:
         return "medium"
-    return "low"    # 0.60–0.75
+    return "low"    # 0.65–0.85
 
 
 # ─── Playwright search ────────────────────────────────────────────────────────
@@ -472,7 +486,8 @@ async def _search_one_page(page, platform: str, query: str) -> list[dict]:
             if price_float == int(price_float)
             else f"{price_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " TL"
         )
-        print(f"[{platform}-search] raw_price={price_raw!r:30s} → parsed={price_float}")
+        warn = " ⚠️ SUSPICIOUS" if (price_float is not None and price_float < 30) else ""
+        print(f"[{platform}-search] raw={price_raw!r:35s} → parsed={price_float}{warn}")
         candidates.append({
             "name":        name[:120],
             "price_str":   price_str,
@@ -519,7 +534,7 @@ async def _run_parallel_searches(
 
 # ─── Public API ──────────────────────────────────────────────────────────────
 
-_ACCEPT_THRESHOLD = 0.60
+_ACCEPT_THRESHOLD = 0.65
 
 
 async def find_cross_platform_matches(

@@ -183,13 +183,14 @@ _JS_TRENDYOL = """
 
 _JS_HEPSIBURADA = """
 () => {
+    const TR_PRICE_RE = /\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})?\\s*(?:TL|₺)/i;
     const results = [];
     const seen = new Set();
 
-    // Hepsiburada uses both -pm- (marketplace) and -p- (direct) product URLs
+    // Accept any hepsiburada.com link that looks like a product page
     const isProductLink = href =>
         href && href.includes('hepsiburada.com') &&
-        (href.includes('-pm-') || (href.includes('-p-') && /\\/[a-z0-9-]+-p-/i.test(href)));
+        (href.includes('-pm-') || href.includes('-p-'));
 
     const links = Array.from(document.querySelectorAll('a[href]'))
         .filter(a => isProductLink(a.href));
@@ -199,39 +200,69 @@ _JS_HEPSIBURADA = """
         if (seen.has(href)) continue;
         seen.add(href);
 
-        // Name: link's title attribute → img alt → nearest heading text
+        const img  = a.querySelector('img');
+        const src  = img ? (img.src || img.getAttribute('data-src') || '') : '';
+        const alt  = img ? (img.alt || '') : '';
         const title = a.getAttribute('title') || '';
-        const img   = a.querySelector('img');
-        const src   = img ? (img.src || img.getAttribute('data-src') || '') : '';
-        const alt   = img ? (img.alt || '') : '';
-        let name    = (title || alt).trim();
 
+        // Name: title attr → img alt → nearest heading text
+        let name = (title || alt).trim();
         if (!name) {
-            // try the parent card heading
-            const card = a.closest('[class*="productCard"]') || a.parentElement;
+            const card = a.closest('li, article, [class*="productCard"], [class*="product-card"]') || a.parentElement;
             if (card) {
-                const h = card.querySelector('h2, h3, [class*="title"], [class*="name"]');
+                const h = card.querySelector('h2, h3, h4, [class*="title"], [class*="name"], [class*="product-name"]');
                 if (h) name = h.textContent.trim();
             }
         }
-        name = name.substring(0, 120);
-        if (!name) continue;
+        if (!name) name = a.textContent.trim().substring(0, 120);
+        name = name.replace(/\\s+/g, ' ').substring(0, 120);
+        if (!name || name.length < 3) continue;
 
-        // Price: from parent card h2 aria-label or any TL element
+        // Price extraction: explicit selectors → aria-label → content scan
         let price = '';
-        const card = a.closest('[class*="productCard"]') || a.parentElement;
+        const card = a.closest('li, article, [class*="productCard"], [class*="product-card"]') || a.parentElement;
         if (card) {
-            const h2 = card.querySelector('h2[aria-label]');
-            if (h2) {
-                const m = h2.getAttribute('aria-label').match(/fiyat:\\s*([\\d.,]+\\s*TL)/i);
-                if (m) price = m[1];
+            // 1) Explicit data-test-id / class selectors (2024-2025 HB patterns)
+            const PRICE_SELS = [
+                '[data-test-id="price-current-price"]',
+                '[data-test-id="price"]',
+                '[class*="price-value"]',
+                '[class*="priceContainer"] span',
+                '[class*="product-price"]',
+                '[class*="curr-price"]',
+                '[class*="hbs-product-price"]',
+                '[class*="currentPrice"]',
+            ];
+            for (const psel of PRICE_SELS) {
+                const el = card.querySelector(psel);
+                if (el) {
+                    const t = el.textContent.trim().replace(/\\s+/g, ' ');
+                    const m = t.match(TR_PRICE_RE);
+                    if (m) { price = m[0]; break; }
+                    // Also accept plain number followed by TL/₺ anywhere in text
+                    if (/\\d/.test(t) && (t.includes('TL') || t.includes('₺'))) {
+                        price = t.substring(0, 30); break;
+                    }
+                }
             }
+            // 2) aria-label on any element (common HB pattern)
             if (!price) {
-                const els = Array.from(card.querySelectorAll('*'))
-                    .filter(el => el.children.length === 0);
-                for (const el of els) {
+                const h2 = card.querySelector('[aria-label]');
+                if (h2) {
+                    const m = (h2.getAttribute('aria-label') || '').match(TR_PRICE_RE);
+                    if (m) price = m[0];
+                }
+            }
+            // 3) content-scan: leaf elements matching TR price RE
+            if (!price) {
+                const allEls = Array.from(card.querySelectorAll('*'));
+                for (const el of allEls) {
+                    if (el.children.length > 2) continue;
                     const t = el.textContent.trim();
-                    if (/^[\\d.,]+\\s*TL$/.test(t)) { price = t; break; }
+                    if (TR_PRICE_RE.test(t)) {
+                        const m = t.match(TR_PRICE_RE);
+                        if (m) { price = m[0]; break; }
+                    }
                 }
             }
         }
@@ -313,6 +344,18 @@ async def _scrape_query(page, query: str, platform: str, existing_urls: set[str]
     except Exception as e:
         print(f"[alt] JS eval error: {e}")
         items = []
+
+    if not items and platform == "hepsiburada":
+        print(f"[alt] hepsiburada: JS returned 0 items — saving debug HTML")
+        try:
+            html_dbg = await page.content()
+            import tempfile, os
+            dbg_path = os.path.join(tempfile.gettempdir(), "hb_search_debug.html")
+            with open(dbg_path, "w", encoding="utf-8") as f:
+                f.write(html_dbg[:80000])
+            print(f"[alt] hepsiburada: HTML saved to {dbg_path}")
+        except Exception as e:
+            print(f"[alt] hepsiburada: debug save error: {e}")
 
     domain_check = _URL_CONTAINS.get(platform, "")
     raw: list[dict] = []

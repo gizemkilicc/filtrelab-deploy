@@ -540,6 +540,8 @@ async def _extract_reviews_hepsiburada(
     Master review extractor for Hepsiburada.
     Returns (reviews, rating_dist, source, completed, reason).
     """
+    print(f"[HB REVIEWS] ===== START =====")
+    print(f"[HB REVIEWS] current url: {page.url}")
     product_id = _extract_hb_product_id(url)
     print(f"[HB REVIEWS] productId={product_id!r} knownReviewCount={review_count}")
     print(f"[HB REVIEWS] captured URLs={len(captured_urls)} bodies={len(captured_bodies)}")
@@ -626,6 +628,75 @@ async def _extract_reviews_hepsiburada(
                     )
                     if reviews:
                         return reviews, None, "api_template", completed, reason
+
+    # ── Strategy 2.5: navigate to -yorumlari page + BS4 + pagination ─────────
+    print("[HB REVIEWS] Strategy 2.5: navigating to -yorumlari page")
+    try:
+        base_url_clean = url.split('?')[0].split('#')[0]
+        # Transform: {slug}-pm-{id} → {slug}-yorumlari-pm-{id}
+        # or:        {slug}-p-{id}  → {slug}-yorumlari-p-{id}
+        review_page_url: str | None = None
+        for sep in ('-pm-', '-p-'):
+            if sep in base_url_clean:
+                parts = base_url_clean.split(sep, 1)
+                review_page_url = f"{parts[0]}-yorumlari{sep}{parts[1]}"
+                break
+        if not review_page_url:
+            review_page_url = base_url_clean.rstrip('/') + '-yorumlari'
+
+        print(f"[HB REVIEWS] yorumlar URL: {review_page_url}")
+        try:
+            await page.goto(review_page_url, wait_until="domcontentloaded", timeout=25000)
+            await page.wait_for_timeout(2500)
+            print(f"[HB REVIEWS] loaded: {page.url}")
+        except Exception as nav_err:
+            print(f"[HB REVIEWS] yorumlar navigation failed: {nav_err}")
+
+        # Scroll to trigger lazy load
+        for _ in range(8):
+            await page.evaluate("window.scrollBy(0, 700)")
+            await page.wait_for_timeout(450)
+
+        html_yr = await page.content()
+        print(f"[HB REVIEWS] yorumlar HTML length: {len(html_yr)}")
+        yorumlar_reviews = _parse_hb_reviews_from_dom(html_yr, product_name)
+        print(f"[HB REVIEWS] yorumlar page 1: {len(yorumlar_reviews)} reviews")
+
+        if yorumlar_reviews:
+            # Paginate: ?sayfa=2, ?sayfa=3, ...
+            all_yr_reviews = list(yorumlar_reviews)
+            base_yr_url = page.url.split('?')[0]
+            for page_num in range(2, 50):
+                if len(all_yr_reviews) >= max_reviews:
+                    break
+                next_url = f"{base_yr_url}?sayfa={page_num}"
+                try:
+                    await page.goto(next_url, wait_until="domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(1200)
+                    for _ in range(4):
+                        await page.evaluate("window.scrollBy(0, 600)")
+                        await page.wait_for_timeout(350)
+                    html_p = await page.content()
+                    pg_reviews = _parse_hb_reviews_from_dom(html_p, product_name)
+                    if not pg_reviews:
+                        print(f"[HB REVIEWS] yorumlar page {page_num}: no cards → stopping")
+                        break
+                    new_r = [r for r in pg_reviews
+                             if not any(e['text'][:80] == r['text'][:80] for e in all_yr_reviews)]
+                    if not new_r:
+                        print(f"[HB REVIEWS] yorumlar page {page_num}: all duplicates → stopping")
+                        break
+                    all_yr_reviews.extend(new_r)
+                    print(f"[HB REVIEWS] yorumlar page {page_num}: +{len(new_r)} (total {len(all_yr_reviews)})")
+                    await page.wait_for_timeout(700)
+                except Exception as pg_err:
+                    print(f"[HB REVIEWS] yorumlar page {page_num} error: {pg_err}")
+                    break
+
+            print(f"[HB REVIEWS] Strategy 2.5 SUCCESS: {len(all_yr_reviews)} reviews")
+            return all_yr_reviews[:max_reviews], None, "yorumlar_page", False, "yorumlar_page"
+    except Exception as e:
+        print(f"[HB REVIEWS] Strategy 2.5 failed: {e}")
 
     # ── Strategy 3: BS4 DOM parse of rendered page ───────────────────────────
     print("[HB REVIEWS] falling back to BS4 DOM parse")
@@ -796,7 +867,12 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                             if norm:
                                 image = norm
                                 data_source["image"] = "meta_og"
+                                print(f"[HB-image] ✓ {sel}: {image[:80]}")
                                 break
+                            else:
+                                print(f"[HB-image] {sel}: content={c!r} rejected")
+                        else:
+                            print(f"[HB-image] {sel}: element not found")
                     except Exception:
                         continue
 
@@ -927,34 +1003,88 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                     pass
 
             if not image:
-                for sel in [
-                    "img[class*='product-main']",
-                    "img[class*='ProductImage']",
-                    "[class*='gallery'] img",
-                    "[class*='product-image'] img",
+                print(f"[HB-image] URL: {page.url}")
+                print(f"[HB-image] json-ld/meta/itemprop all failed — trying DOM strategies")
+
+                # Scroll first to trigger any lazy loading
+                try:
+                    await page.evaluate("window.scrollBy(0, 500)")
+                    await page.wait_for_timeout(1500)
+                except Exception:
+                    pass
+
+                # Strategy 4: DOM selectors — prefer productimages CDN URLs
+                dom_selectors = [
+                    "img#productImage",
+                    "#productMainImage img",
+                    'img[data-test-id="product-image"]',
+                    'img[data-test-id*="product-image"]',
+                    'img[class*="product-image"]',
+                    'img[class*="ProductImage"]',
+                    'img[class*="hermes-ProductImage"]',
+                    'div[class*="image-gallery"] img',
+                    'div[class*="product-detail"] img',
+                    'div[id*="productMainImage"] img',
+                    'main img[src*="productimages"]',
+                    "section img",
                     "main img",
-                ]:
+                ]
+                for sel in dom_selectors:
                     try:
                         el = await page.query_selector(sel)
                         if el:
-                            for attr in ("src", "data-src", "data-original"):
+                            for attr in ("data-zoom-image", "data-src", "data-original", "src"):
                                 v = await el.get_attribute(attr)
                                 if v:
-                                    norm = normalize_image_url(v.strip(), _BASE)
-                                    if norm:
-                                        image = norm
-                                        data_source["image"] = "dom"
-                                        break
+                                    # Prefer URLs that are known-good CDN
+                                    if "productimages" in v.lower():
+                                        norm = normalize_image_url(v.strip(), _BASE)
+                                        if norm:
+                                            image = norm
+                                            data_source["image"] = "dom"
+                                            print(f"[HB-image] ✓ STRATEGY 4 DOM {sel!r}: {image[:80]}")
+                                            break
+                            if not image:
+                                for attr in ("data-zoom-image", "data-src", "data-original", "src"):
+                                    v = await el.get_attribute(attr)
+                                    if v:
+                                        norm = normalize_image_url(v.strip(), _BASE)
+                                        if norm:
+                                            image = norm
+                                            data_source["image"] = "dom"
+                                            print(f"[HB-image] ✓ STRATEGY 4 DOM fallback {sel!r}: {image[:80]}")
+                                            break
                             if not image:
                                 ss = await el.get_attribute("srcset")
                                 img_ss = parse_srcset(ss, _BASE)
                                 if img_ss:
                                     image = img_ss
                                     data_source["image"] = "dom_srcset"
+                                    print(f"[HB-image] ✓ STRATEGY 4 srcset {sel!r}: {image[:80]}")
                         if image:
                             break
                     except Exception:
                         continue
+
+                # Strategy 5: scan all imgs for productimages CDN URL
+                if not image:
+                    try:
+                        all_imgs = await page.query_selector_all("img")
+                        print(f"[HB-image] strategy 5: scanning {len(all_imgs)} images")
+                        for img_el in all_imgs[:50]:
+                            for attr in ("src", "data-src", "data-original"):
+                                v = await img_el.get_attribute(attr)
+                                if v and "productimages" in v.lower():
+                                    norm = normalize_image_url(v.strip(), _BASE)
+                                    if norm:
+                                        image = norm
+                                        data_source["image"] = "scan"
+                                        print(f"[HB-image] ✓ STRATEGY 5 scan: {image[:80]}")
+                                        break
+                            if image:
+                                break
+                    except Exception as e:
+                        print(f"[HB-image] strategy 5 error: {e}")
 
             if not rating:
                 for sel in [
@@ -975,18 +1105,46 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                     except Exception:
                         continue
 
-            # ── 5. JS DOM evaluation (image + price) ──────────────────────
+            # ── Strategy 6: JS eval — CDN-prioritised, handles // URLs ──────
             if not image:
+                print(f"[HB-image] strategy 6: JS eval")
                 try:
                     result = await page.evaluate("""
                         () => {
                             const BAD = ['logo','icon','svg','placeholder','blank','spinner','badge','favicon'];
-                            const ok = s => s && s.startsWith('http') && !BAD.some(b => s.toLowerCase().includes(b));
+                            const CDN = 'productimages.hepsiburada.com';
+                            function resolve(s) {
+                                if (!s) return '';
+                                if (s.startsWith('//')) return 'https:' + s;
+                                return s;
+                            }
+                            const ok = s => {
+                                const r = resolve(s);
+                                return r && r.startsWith('http') && !BAD.some(b => r.toLowerCase().includes(b));
+                            };
+                            function bestSrc(img) {
+                                for (const attr of ['data-zoom-image','data-src','data-lazy','data-original']) {
+                                    const t = resolve(img.getAttribute(attr));
+                                    if (ok(t)) return t;
+                                }
+                                const ss = img.getAttribute('srcset') || '';
+                                if (ss) {
+                                    const parts = ss.split(',').map(s => s.trim().split(/\\s+/)[0]).filter(Boolean);
+                                    for (let i = parts.length - 1; i >= 0; i--) {
+                                        const t = resolve(parts[i]);
+                                        if (ok(t)) return t;
+                                    }
+                                }
+                                const t = resolve(img.src);
+                                return ok(t) ? t : null;
+                            }
                             const imgs = Array.from(document.querySelectorAll('img'))
-                                .map(img => ({ img, src: img.src || img.getAttribute('data-src') || '' }))
-                                .filter(({ src }) => ok(src))
-                                .sort((a,b) => (b.img.naturalWidth || 0) - (a.img.naturalWidth || 0));
-                            return imgs.length > 0 ? imgs[0].src : null;
+                                .map(img => ({ src: bestSrc(img), w: img.naturalWidth || 0 }))
+                                .filter(r => r.src);
+                            const cdn = imgs.filter(r => r.src.includes(CDN));
+                            const pool = cdn.length > 0 ? cdn : imgs;
+                            pool.sort((a, b) => b.w - a.w);
+                            return pool.length > 0 ? pool[0].src : null;
                         }
                     """)
                     if result:
@@ -994,8 +1152,35 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                         if norm:
                             image = norm
                             data_source["image"] = "js"
-                except Exception:
-                    pass
+                            print(f"[HB-image] ✓ STRATEGY 6 JS eval: {image[:80]}")
+                        else:
+                            print(f"[HB-image] strategy 6: result not normalizable: {str(result)[:80]}")
+                    else:
+                        print(f"[HB-image] strategy 6: JS eval returned None")
+                except Exception as e:
+                    print(f"[HB-image] strategy 6 error: {e}")
+
+            # ── Strategy 7: regex scan of full HTML (last resort) ─────────
+            if not image:
+                print(f"[HB-image] strategy 7: regex scan of full HTML")
+                try:
+                    html_content = await page.content()
+                    matches = re.findall(
+                        r'https?://[^"\'>\s]*productimages[^"\'>\s]*\.(?:jpg|jpeg|png|webp)',
+                        html_content, re.IGNORECASE,
+                    )
+                    if matches:
+                        image = matches[0]
+                        data_source["image"] = "regex"
+                        print(f"[HB-image] ✓ STRATEGY 7 regex: {image[:80]}")
+                    else:
+                        print(f"[HB-image] strategy 7: no productimages URL in HTML")
+                except Exception as e:
+                    print(f"[HB-image] strategy 7 error: {e}")
+
+            if not image:
+                print(f"[HB-image] ✗ ALL STRATEGIES FAILED")
+            print(f"[HB-image] FINAL: image={image!r} source={data_source.get('image')!r}")
 
             if not price:
                 try:
@@ -1028,87 +1213,113 @@ async def scrape_hepsiburada_product(url: str, max_reviews: int | None = None) -
                 except Exception:
                     pass
 
-            # Fiyat fallback ve doğrulama - Hepsiburada
-            try:
-                if not price or price == 0 or (isinstance(price, str) and not price.strip()):
-                    _hb_html_for_price = await page.content()
-                    _hb_soup_price = BeautifulSoup(_hb_html_for_price, 'html.parser')
+            # ── Price fallback: multi-strategy with [HB-price] logging ──────
+            if not price or (isinstance(price, str) and not price.strip()):
+                from .price_utils import parse_tr_price as _parse_tr_price
 
-                    price_candidates: list[tuple[str, object]] = []
+                _hb_price_float: float | None = None
 
-                    # 1) JSON-LD'den fiyat
-                    for script in _hb_soup_price.find_all('script', type='application/ld+json'):
-                        try:
-                            data = json.loads(script.string or '{}')
-                            items = data if isinstance(data, list) else [data]
-                            for item in items:
-                                offers = item.get('offers', {})
-                                if isinstance(offers, list):
-                                    offers = offers[0] if offers else {}
-                                p = offers.get('price') or offers.get('lowPrice')
-                                if p:
-                                    price_candidates.append(('json-ld', p))
-                        except Exception:
-                            continue
+                # 1) DOM: indirimli/güncel fiyat (önce bunlara bak)
+                for _psel in (
+                    'span[data-test-id="price-current-price"]',
+                    'div[data-test-id="price-current-price"]',
+                    'span[class*="current-price"]',
+                    'span[class*="discounted-price"]',
+                    'span[class*="sale-price"]',
+                    'div[class*="product-price-current"]',
+                ):
+                    try:
+                        _el = await page.query_selector(_psel)
+                        if _el:
+                            _txt = await _el.inner_text()
+                            _v = _parse_tr_price(_txt)
+                            if _v and _v > 5:
+                                _hb_price_float = _v
+                                print(f"[HB-price] İNDİRİMLİ dom {_psel}: {_v}")
+                                break
+                    except Exception:
+                        continue
 
-                    # 2) Meta tag'lerden fiyat
-                    meta_price = _hb_soup_price.find('meta', {'property': 'product:price:amount'})
-                    if meta_price and meta_price.get('content'):
-                        price_candidates.append(('meta', meta_price['content']))
-                    og_price = _hb_soup_price.find('meta', {'property': 'og:price:amount'})
-                    if og_price and og_price.get('content'):
-                        price_candidates.append(('og', og_price['content']))
-
-                    # 3) DOM selector'ları (diğer satıcılar container'larını atla)
-                    for bs_sel in (
-                        '[data-test-id="price-current-price"]',
-                        '[data-test-id="default-price"]',
+                # 2) DOM: normal fiyat (fallback)
+                if not _hb_price_float:
+                    for _psel in (
+                        'span[itemprop="price"]',
                         'span[class*="price-value"]',
-                        'span[class*="product-price"]',
                         'div[class*="priceContainer"] span',
+                        '#offering-price',
                     ):
                         try:
-                            for el in _hb_soup_price.select(bs_sel):
-                                if _in_bad_container_bs4(el):
-                                    continue
-                                txt = el.get_text(strip=True)
-                                if txt and re.search(r'\d', txt):
-                                    price_candidates.append((bs_sel, txt))
+                            _el = await page.query_selector(_psel)
+                            if _el:
+                                _txt = await _el.inner_text()
+                                _v = _parse_tr_price(_txt)
+                                if _v and _v > 5:
+                                    _hb_price_float = _v
+                                    print(f"[HB-price] NORMAL dom {_psel}: {_v}")
                                     break
                         except Exception:
                             continue
 
-                    def _parse_tr_price_val(raw) -> float | None:
-                        s = re.sub(r'[^\d,.\-]', '', str(raw).strip())
-                        if not s:
-                            return None
-                        if ',' in s and '.' in s:
-                            s = s.replace('.', '').replace(',', '.')
-                        elif ',' in s:
-                            s = s.replace(',', '.')
-                        try:
-                            val = float(s)
-                            return val if 0.01 < val < 1_000_000 else None
-                        except Exception:
-                            return None
+                # 3) JSON-LD (lowPrice = indirimli önce, price = normal fallback)
+                if not _hb_price_float:
+                    try:
+                        _hb_html_p = await page.content()
+                        _hb_soup_p = BeautifulSoup(_hb_html_p, 'html.parser')
+                        for script in _hb_soup_p.find_all('script', type='application/ld+json'):
+                            try:
+                                _d = json.loads(script.string or '{}')
+                                for _item in (_d if isinstance(_d, list) else [_d]):
+                                    _off = _item.get('offers', {})
+                                    if isinstance(_off, list):
+                                        _off = _off[0] if _off else {}
+                                    _p = _off.get('lowPrice') or _off.get('price')
+                                    if _p:
+                                        _v = _parse_tr_price(_p)
+                                        if _v:
+                                            _hb_price_float = _v
+                                            print(f"[HB-price] json-ld: {_v}")
+                                            break
+                            except Exception:
+                                continue
+                            if _hb_price_float:
+                                break
+                    except Exception as e:
+                        print(f"[HB-price] json-ld error: {e}")
 
-                    parsed_prices: list[tuple[str, float]] = []
-                    for source, raw in price_candidates:
-                        val = _parse_tr_price_val(raw)
-                        if val is not None:
-                            parsed_prices.append((source, val))
-                            print(f"[scraper] hb price candidate: {source} -> {val}")
+                # 4) Meta tag
+                if not _hb_price_float:
+                    try:
+                        _meta_el = await page.query_selector('meta[property="product:price:amount"]')
+                        if _meta_el:
+                            _mc = await _meta_el.get_attribute('content')
+                            _v = _parse_tr_price(_mc)
+                            if _v:
+                                _hb_price_float = _v
+                                print(f"[HB-price] meta: {_v}")
+                    except Exception:
+                        pass
 
-                    if parsed_prices:
-                        preferred = [p for p in parsed_prices if p[0] in ('json-ld', 'meta', 'og')]
-                        chosen = preferred[0] if preferred else parsed_prices[0]
-                        price = parse_price_to_string(str(chosen[1])) or f"{chosen[1]} TL"
-                        data_source["price"] = "bs4_fallback"
-                        print(f"[scraper] hb price chosen: {chosen[0]} -> {price}")
-                    else:
-                        print("[scraper] hb price: hiçbir aday parse edilemedi")
-            except Exception as e:
-                print(f"[scraper] Hepsiburada price fallback error: {e}")
+                # 5) Regex scan of full HTML
+                if not _hb_price_float:
+                    try:
+                        _hb_html_p2 = await page.content()
+                        _rx_matches = re.findall(r'"price"\s*:\s*"?(\d+[.,]?\d*)"?', _hb_html_p2)
+                        for _rm in _rx_matches:
+                            _v = _parse_tr_price(_rm)
+                            if _v and 5 < _v < 500_000:
+                                _hb_price_float = _v
+                                print(f"[HB-price] regex: {_v}")
+                                break
+                    except Exception as e:
+                        print(f"[HB-price] regex error: {e}")
+
+                if _hb_price_float:
+                    price = parse_price_to_string(str(_hb_price_float)) or f"{_hb_price_float} TL"
+                    data_source["price"] = "hb_fallback"
+                else:
+                    print("[HB-price] ✗ ALL STRATEGIES FAILED")
+
+                print(f"[HB-price] FINAL: {price!r}")
 
             # ── Dynamic review limit ───────────────────────────────────────
             # If caller did not pass an explicit max_reviews, compute it from

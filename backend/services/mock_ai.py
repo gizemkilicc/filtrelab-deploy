@@ -2,7 +2,7 @@ import asyncio
 import traceback
 
 from .category_detector import detect_category
-from .platform_detector import detect_platform
+from .platform_detector import detect_platform, normalize_url, clean_url
 from .product_scraper import scrape_product
 from .scoring_engine import run_scoring
 from .text_generator import generate_explanations
@@ -70,10 +70,14 @@ _VALID_DECISIONS = {"ALINABİLİR", "DİKKATLİ İNCELE", "BEKLE"}
 async def generate_analysis(url: str, include_reviews: bool = False):
     print(f"[ANALYZE] incoming url = {url}")
 
+    url = normalize_url(url)
     platform = detect_platform(url)
     print(f"[ANALYZE] detected platform = {platform}")
     if platform not in {"trendyol", "hepsiburada", "amazon_tr"}:
         raise ValueError(UNSUPPORTED_SITE_ERROR)
+
+    url = clean_url(url, platform)
+    print(f"[ANALYZE] cleaned url = {url}")
 
     try:
         # Puanlama (duygu, sahte yorum riski) her zaman yorumlara ihtiyaç duyar,
@@ -110,7 +114,7 @@ async def generate_analysis(url: str, include_reviews: bool = False):
     }:
         raise ValueError(DEMO_ERROR)
     if not price_raw:
-        raise ValueError(DEMO_ERROR)
+        print("[WARNING] price not found — continuing with empty price")
 
     # Reject unsafe count sources
     ds = extracted_data.get("dataSource") or {}
