@@ -29,6 +29,8 @@ from routes import chat as chat_router
 from routes import user_features
 from routes import reviews as reviews_router
 from routes import cross_platform as cross_platform_router
+from routes import pseudo_comprehend as pseudo_comprehend_router
+from routes import psychology as psychology_router
 from services.database import init_db
 
 app = FastAPI(
@@ -58,6 +60,8 @@ app.include_router(chat_router.router)
 app.include_router(user_features.router)
 app.include_router(reviews_router.router)
 app.include_router(cross_platform_router.router)
+app.include_router(pseudo_comprehend_router.router)
+app.include_router(psychology_router.router)
 
 
 @app.on_event("startup")

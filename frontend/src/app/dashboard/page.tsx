@@ -19,6 +19,8 @@ import { ProgressBar } from "@/components/ui/ProgressBar";
 import { FinalVerdict } from "@/components/ui/FinalVerdict";
 import { ScanTimeline } from "@/components/ui/ScanTimeline";
 import { CrossPlatformPrices } from "@/components/CrossPlatformPrices";
+import { ReviewIntelligence } from "@/components/ReviewIntelligence";
+import { ShoppingPersonality } from "@/components/ShoppingPersonality";
 import { ShieldAlert, PackageX, BrainCircuit, ArrowLeft, Star, TrendingUp, Zap, Sparkles, Bell, Heart, Loader2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -399,6 +401,11 @@ function DashboardContent() {
               dataWarning={result.dataWarning}
             />
 
+            {/* SYSTEM 1 — Yapay Zeka Yorum Analizi (Pseudo Comprehend) */}
+            {result.reviewIntelligence && (
+              <ReviewIntelligence data={result.reviewIntelligence} />
+            )}
+
             {/* Yapay Zeka Kararı */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -490,6 +497,9 @@ function DashboardContent() {
                 </AnimatedCard>
               )}
             </motion.div>
+
+            {/* SYSTEM 2 — Alışveriş Kişiliği (Shopping Psychology) */}
+            <ShoppingPersonality result={result} />
             </div>
 
           </div>

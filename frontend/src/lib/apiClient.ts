@@ -35,6 +35,17 @@ export type AIAnalysisResult = {
   trustScore: number;
   returnRisk: "Düşük" | "Orta" | "Yüksek";
   sentimentScore: number;
+  reviewIntelligence?: {
+    sentiment_score: number;
+    positive: number;
+    negative: number;
+    neutral: number;
+    mixed: number;
+    suspicious_review_count: number;
+    review_risk_score: number;
+    detected_key_phrases: string[];
+    source: "aws_comprehend" | "deepseek_fallback";
+  } | null;
   pricePerformance: number | null;
   confidenceLevel: "HIGH_CONFIDENCE" | "MEDIUM_CONFIDENCE" | "LOW_CONFIDENCE" | "NO_REVIEW_TEXT";
   dataWarning: string | null;
@@ -459,4 +470,35 @@ export async function deleteFavorite(id: number) {
 
 export async function getRecommendations() {
   return featureRequest<{ success: boolean; message: string | null; recommendations: Recommendation[] }>("/recommendations");
+}
+
+// ── SYSTEM 2 — Shopping Psychology ─────────────────────────────────────────
+
+export type ShoppingPsychology = {
+  shopping_personality: string;
+  trust_sensitivity: number;
+  impulsive_vs_analytical: number;
+  budget_behavior: string;
+  recommendation_strategy: string;
+  confidence_score: number;
+};
+
+/**
+ * Gezinme geçmişini /shopping-psychology endpoint'ine gönderir.
+ * Herhangi bir hatada null döndürür — çağıran taraf bölümü gizler, çökmez.
+ */
+export async function getShoppingPsychology(
+  history: unknown[]
+): Promise<ShoppingPsychology | null> {
+  try {
+    const res = await fetch(`${API_URL}/shopping-psychology`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ history }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ShoppingPsychology;
+  } catch {
+    return null;
+  }
 }

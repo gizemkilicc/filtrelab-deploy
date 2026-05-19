@@ -7,6 +7,7 @@ from .product_scraper import scrape_product
 from .scoring_engine import run_scoring
 from .text_generator import generate_explanations
 from .alternative_scraper import get_alternatives
+from .pseudo_comprehend import pseudo_comprehend_analysis
 
 
 def _safe_str(val, default: str = "") -> str:
@@ -216,6 +217,14 @@ async def generate_analysis(url: str, include_reviews: bool = False):
     data_quality = scores.get("dataQuality") or {}
     scoring_version = scores.get("scoringVersion", "confidence-v2")
 
+    review_intelligence = await pseudo_comprehend_analysis(reviews_raw)
+    if review_texts:
+        sentiment_score = review_intelligence["sentiment_score"]
+        print(f"[SENTIMENT] pseudo_comprehend source={review_intelligence['source']} "
+              f"score={sentiment_score} "
+              f"suspicious={review_intelligence['suspicious_review_count']} "
+              f"risk={review_intelligence['review_risk_score']}")
+
     print(f"[SCORE] decision={final_decision!r} trust={trust_score} fake={fake_review_risk} "
           f"sentiment={sentiment_score} pricePerf={price_performance} confidence={confidence_level}")
 
@@ -284,6 +293,7 @@ async def generate_analysis(url: str, include_reviews: bool = False):
         "returnProbability": return_risk,
         "trustScore": trust_score,
         "sentimentScore": sentiment_score,
+        "reviewIntelligence": review_intelligence,
         "pricePerformance": price_performance,
         "finalDecision": final_decision,
         "analysis": analysis_text,

@@ -16,3 +16,6 @@ python-dotenv==1.0.1
 # Database
 psycopg2-binary>=2.9
 alembic>=1.13
+
+# AWS (Comprehend duygu analizi)
+boto3>=1.34
