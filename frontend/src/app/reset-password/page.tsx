@@ -1,17 +1,19 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { KeyRound, Sparkles } from "lucide-react";
 import { resetPassword } from "@/lib/apiClient";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const token = searchParams.get("token") || "";
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -27,8 +29,13 @@ function ResetPasswordForm() {
     try {
       const res = await resetPassword(token, newPassword);
       if (res.success) {
-        setSuccessMsg(res.message);
+        setSuccessMsg(res.message || "Şifreniz güncellendi.");
         setNewPassword("");
+        setDone(true);
+        // Clear stored session — token is now invalid after password change
+        localStorage.removeItem("filtre_token");
+        localStorage.removeItem("filtre_user");
+        window.dispatchEvent(new CustomEvent("filtre-auth-changed"));
       } else {
         setError(res.error);
       }
@@ -65,6 +72,16 @@ function ResetPasswordForm() {
           </div>
         )}
 
+        {done ? (
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="w-full relative group overflow-hidden rounded-xl border border-white shadow-[0_4px_15px_rgba(0,0,0,0.05),inset_0_2px_4px_rgba(255,255,255,1)] transition-all active:scale-[0.98] bg-white/80 hover:bg-white backdrop-blur-md px-4 py-3.5 flex items-center justify-center font-medium text-gray-800 text-[15px]"
+          >
+            Giriş Yap
+            <Sparkles className="w-4 h-4 ml-2 opacity-80" />
+          </button>
+        ) : (
         <form className="space-y-4 relative z-10" onSubmit={handleSubmit}>
           <div>
             <label className="block text-[11px] font-semibold text-gray-500 mb-1.5 ml-1 tracking-widest uppercase">
@@ -93,6 +110,7 @@ function ResetPasswordForm() {
             </div>
           </button>
         </form>
+        )}
       </div>
     </main>
   );

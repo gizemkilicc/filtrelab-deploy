@@ -1,18 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Bell, History, Heart, Bot, ArrowRight } from "lucide-react";
+import { History, Heart, Bot, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { AuthModal } from "./AuthModal";
 import Link from "next/link";
 
 const features = [
-  {
-    icon: Bell,
-    title: "Fiyat Takibi",
-    description: "Ürün ucuzlayınca sana haber verelim",
-    href: "/price-tracking",
-  },
   {
     icon: History,
     title: "Analiz Geçmişi",

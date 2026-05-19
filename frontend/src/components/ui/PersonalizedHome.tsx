@@ -5,12 +5,11 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, Bell, Heart, History, Loader2 } from "lucide-react";
+import { ArrowRight, Heart, History, Loader2 } from "lucide-react";
 import {
   getAnalysisHistory,
   getFavorites,
   getMe,
-  getPriceTracking,
   getRecommendations,
   type AuthUser,
   type Recommendation,
@@ -21,20 +20,12 @@ type PersonalizedHomeProps = {
 };
 
 type Counts = {
-  tracking: number;
   history: number;
   favorites: number;
   recommendations: number;
 };
 
 const featureCards = [
-  {
-    title: "Fiyat takibi",
-    text: "Bu ürün ucuzlayınca haber ver",
-    href: "/price-tracking",
-    countKey: "tracking" as const,
-    icon: Bell,
-  },
   {
     title: "Analiz geçmişi",
     text: "Daha önce baktığın ürünler kayıtlı kalsın",
@@ -57,7 +48,6 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
   const [loading, setLoading] = useState(true);
   const [productUrl, setProductUrl] = useState("");
   const [counts, setCounts] = useState<Counts>({
-    tracking: 0,
     history: 0,
     favorites: 0,
     recommendations: 0,
@@ -81,8 +71,7 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
 
         if (!currentUser) return;
 
-        const [trackingRes, historyRes, favoritesRes, recommendationsRes] = await Promise.all([
-          getPriceTracking(),
+        const [historyRes, favoritesRes, recommendationsRes] = await Promise.all([
           getAnalysisHistory(),
           getFavorites(),
           getRecommendations(),
@@ -90,7 +79,6 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
 
         if (!mounted) return;
         setCounts({
-          tracking: trackingRes.success ? trackingRes.data.items.length : 0,
           history: historyRes.success ? historyRes.data.items.length : 0,
           favorites: favoritesRes.success ? favoritesRes.data.items.length : 0,
           recommendations: recommendationsRes.success ? recommendationsRes.data.recommendations.length : 0,
@@ -207,7 +195,7 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
             </div>
           ) : (
             <p className="fl-sans text-[14px] text-[var(--ink-30)]">
-              İlk favori, fiyat takibi veya analiz kaydından sonra önerilerin burada görünecek.
+              İlk favori veya analiz kaydından sonra önerilerin burada görünecek.
             </p>
           )}
         </section>
@@ -216,10 +204,9 @@ export function PersonalizedHome({ children }: PersonalizedHomeProps) {
         <section className="fl-divider mt-16 pt-10">
           <p className="fl-kicker mb-4">BUGÜNKÜ ODAK</p>
           <p className="fl-sans max-w-2xl text-[14px] leading-relaxed text-[var(--ink-10)]">
-            Takibe aldığın ürünleri, favorilerini ve analiz geçmişini aynı yerden yönetebilirsin.
+            Favorilerini ve analiz geçmişini aynı yerden yönetebilirsin.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link href="/price-tracking" className={ghostLink}>Fiyat takibine git</Link>
             <Link href="/history" className={ghostLink}>Geçmişi aç</Link>
             <Link href="/favorites" className={ghostLink}>Favorileri aç</Link>
           </div>

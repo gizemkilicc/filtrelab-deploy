@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -30,6 +30,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
+    token_version = Column(Integer, default=1, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -105,6 +106,15 @@ class Favorite(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # SQLite doesn't support ADD COLUMN via create_all — run migration manually
+    if DATABASE_URL.startswith("sqlite"):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 1"))
+                conn.commit()
+                print("[db] Migration: added token_version to users")
+        except Exception:
+            pass  # Column already exists
 
 
 def get_db():

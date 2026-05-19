@@ -99,11 +99,6 @@ export type SimpleAuthResponse =
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-export type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-
 export type SavedProduct = {
   id: number;
   productName: string;
@@ -308,6 +303,33 @@ export async function resetPassword(
   }
 }
 
+export async function verifyEmailToken(
+  token: string
+): Promise<SimpleAuthResponse> {
+  try {
+    const res = await fetch(`${API_URL}/auth/verify-email?token=${encodeURIComponent(token)}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.detail || json.error || "Doğrulama başarısız.");
+    return { success: true, message: json.message };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Doğrulama başarısız." };
+  }
+}
+
+export async function resendVerificationEmail(
+  email: string
+): Promise<SimpleAuthResponse> {
+  try {
+    const data = await authPost<{ success: boolean; message: string }>(
+      "/auth/send-verification-email",
+      { email }
+    );
+    return { success: true, message: data.message };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "İşlem başarısız." };
+  }
+}
+
 export async function getMe(): Promise<AuthUser | null> {
   try {
     const token =
@@ -369,61 +391,7 @@ export function logoutUser(): void {
   }
 }
 
-// ── Chat ─────────────────────────────────────────────────────────────────────
-
-export async function chatWithAssistant(
-  message: string,
-  analysis: AIAnalysisResult | null,
-  history: ChatMessage[]
-): Promise<{ success: true; reply: string; intent?: string; preferences?: Record<string, boolean> } | { success: false; error: string }> {
-  try {
-    const res = await fetch(`${API_URL}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        analysis,
-        history: history.slice(-12),
-      }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.success === false) {
-      return { success: false, error: json.detail || json.error || "Yanıt oluşturulamadı." };
-    }
-    return {
-      success: true,
-      reply: json.reply || "Şu anda yanıt oluşturamadım, tekrar dener misin?",
-      intent: json.intent,
-      preferences: json.preferences,
-    };
-  } catch {
-    return { success: false, error: "Şu anda yanıt oluşturamadım, tekrar dener misin?" };
-  }
-}
-
 // ── User features ────────────────────────────────────────────────────────────
-
-export async function addPriceTracking(item: {
-  productName: string;
-  productUrl: string;
-  currentPrice: string;
-  targetPrice?: string;
-  image?: string | null;
-  platform?: string | null;
-}) {
-  return featureRequest<{ success: boolean; item: SavedProduct }>("/price-tracking", {
-    method: "POST",
-    body: JSON.stringify(item),
-  });
-}
-
-export async function getPriceTracking() {
-  return featureRequest<{ success: boolean; items: SavedProduct[] }>("/price-tracking");
-}
-
-export async function deletePriceTracking(id: number) {
-  return featureRequest<{ success: boolean }>(`/price-tracking/${id}`, { method: "DELETE" });
-}
 
 export async function addAnalysisHistory(item: {
   productName: string;

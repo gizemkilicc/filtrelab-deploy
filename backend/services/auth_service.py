@@ -28,10 +28,15 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT helpers ──────────────────────────────────────────────────────────────
 
-def create_access_token(user_id: int, email: str) -> str:
+def _token_version(user: User) -> int:
+    return user.token_version if user.token_version is not None else 1
+
+
+def create_access_token(user_id: int, email: str, token_version: int = 1) -> str:
     payload = {
         "sub": str(user_id),
         "email": email,
+        "tvs": token_version,
         "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -42,6 +47,11 @@ def decode_access_token(token: str) -> dict | None:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         return None
+
+
+def validate_token_version(user: User, payload: dict) -> bool:
+    """False means the token was issued before a password reset — reject it."""
+    return _token_version(user) == (payload.get("tvs") or 1)
 
 
 # ── User operations ──────────────────────────────────────────────────────────
@@ -69,7 +79,8 @@ def create_user(
         last_name=last_name.strip() or None,
         email=email.lower().strip(),
         password_hash=hash_password(password),
-        is_verified=True,
+        is_verified=False,
+        token_version=1,
     )
     db.add(user)
     db.commit()
@@ -150,6 +161,8 @@ def reset_password_with_token(db: Session, token: str, new_password: str) -> boo
     if not user:
         return False
     user.password_hash = hash_password(new_password)
+    # Invalidate all existing JWT tokens by bumping token_version
+    user.token_version = _token_version(user) + 1
     record.used = True
     db.commit()
     return True

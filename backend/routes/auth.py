@@ -6,16 +6,20 @@ from sqlalchemy.orm import Session
 
 from services.auth_service import (
     create_access_token,
+    create_email_verification_token,
     create_password_reset_token,
     create_user,
     decode_access_token,
     get_user_by_email,
     get_user_by_id,
     reset_password_with_token,
+    validate_token_version,
+    verify_email_token,
     verify_password,
+    _token_version,
 )
 from services.database import AnalysisHistory, get_db
-from services.email_service import send_password_reset_email
+from services.email_service import send_password_reset_email, send_verification_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -69,6 +73,7 @@ def _user_payload(user, db: Session | None = None) -> dict:
         "lastName": last_name,
         "name": user.name or f"{first_name} {last_name}".strip(),
         "email": user.email,
+        "isVerified": bool(user.is_verified),
         "createdAt": user.created_at.isoformat() if user.created_at else None,
     }
     if db:
@@ -82,6 +87,21 @@ def _parse_bearer(authorization: str | None) -> str | None:
     if authorization and authorization.startswith("Bearer "):
         return authorization[7:]
     return None
+
+
+def _get_verified_user(token: str | None, db: Session):
+    """Decode token, validate token_version, return user or raise 401."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum açmanız gerekiyor.")
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş oturum.")
+    user = get_user_by_id(db, int(payload["sub"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    if not validate_token_version(user, payload):
+        raise HTTPException(status_code=401, detail="Şifre değiştirildi. Lütfen tekrar giriş yapın.")
+    return user
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -110,9 +130,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
     user = create_user(db, first_name=first_name, last_name=last_name, email=email, password=password)
 
+    # Send verification email (prints link to console if SMTP not configured)
+    try:
+        token = create_email_verification_token(db, user.id)
+        send_verification_email(email, token)
+    except Exception as e:
+        print(f"[auth] verification email error: {e}")
+
     return {
         "success": True,
-        "message": "Kayıt başarılı. Giriş yapabilirsiniz.",
+        "message": "Kayıt başarılı. E-posta adresinize doğrulama bağlantısı gönderildi.",
         "userId": user.id,
     }
 
@@ -125,7 +152,13 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı.")
 
-    access_token = create_access_token(user.id, user.email)
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="E-posta adresiniz henüz doğrulanmamış. Lütfen e-postanızdaki doğrulama bağlantısına tıklayın.",
+        )
+
+    access_token = create_access_token(user.id, user.email, _token_version(user))
 
     return {
         "success": True,
@@ -161,17 +194,38 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
             status_code=400,
             detail="Geçersiz veya süresi dolmuş sıfırlama bağlantısı.",
         )
-    return {"success": True, "message": "Şifreniz başarıyla güncellendi."}
+    return {"success": True, "message": "Şifreniz başarıyla güncellendi. Yeni şifrenizle giriş yapabilirsiniz."}
 
 
 @router.post("/send-verification-email")
 def resend_verification(body: SendVerificationRequest, db: Session = Depends(get_db)):
-    return {"success": True, "message": "E-posta doğrulama bu sürümde gerekli değildir."}
+    email = body.email.strip().lower()
+    user = get_user_by_email(db, email)
+
+    if user and not user.is_verified:
+        try:
+            token = create_email_verification_token(db, user.id)
+            send_verification_email(email, token)
+        except Exception as e:
+            print(f"[auth] resend verification error: {e}")
+
+    # Always return success to prevent email enumeration
+    return {"success": True, "message": "Doğrulama e-postası gönderildi."}
 
 
 @router.get("/verify-email")
 def verify_email(token: str, db: Session = Depends(get_db)):
-    return {"success": True, "message": "E-posta doğrulama bu sürümde gerekli değildir. Giriş yapabilirsiniz."}
+    user = verify_email_token(db, token)
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="Doğrulama bağlantısı geçersiz veya süresi dolmuş.",
+        )
+    return {
+        "success": True,
+        "message": "E-posta adresiniz başarıyla doğrulandı. Giriş yapabilirsiniz.",
+        "email": user.email,
+    }
 
 
 @router.get("/me")
@@ -179,18 +233,7 @@ def get_me(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    token = _parse_bearer(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Oturum açmanız gerekiyor.")
-
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş oturum.")
-
-    user = get_user_by_id(db, int(payload["sub"]))
-    if not user:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-
+    user = _get_verified_user(_parse_bearer(authorization), db)
     return _user_payload(user, db)
 
 
@@ -200,17 +243,7 @@ def update_me(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    token = _parse_bearer(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Oturum açmanız gerekiyor.")
-
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş oturum.")
-
-    user = get_user_by_id(db, int(payload["sub"]))
-    if not user:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
+    user = _get_verified_user(_parse_bearer(authorization), db)
 
     first_name = (body.firstName or "").strip()
     last_name = (body.lastName or "").strip()

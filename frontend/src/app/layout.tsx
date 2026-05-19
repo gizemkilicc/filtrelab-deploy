@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Cormorant_Garamond, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
-import { GlobalChatbot } from "@/components/ui/GlobalChatbot";
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -45,7 +44,6 @@ export default function RootLayout({
       <body className="min-h-screen flex flex-col antialiased">
         <ThemeProvider>
           {children}
-          <GlobalChatbot />
         </ThemeProvider>
       </body>
     </html>

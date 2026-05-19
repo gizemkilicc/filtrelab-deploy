@@ -8,9 +8,6 @@ import {
   addFavorite,
   deleteFavorite,
   getFavorites,
-  addPriceTracking,
-  deletePriceTracking,
-  getPriceTracking,
   addAnalysisHistory,
   type AIAnalysisResult,
 } from "@/lib/apiClient";
@@ -18,7 +15,7 @@ import { ScanTimeline } from "@/components/ui/ScanTimeline";
 import { CrossPlatformPrices } from "@/components/CrossPlatformPrices";
 import { ReviewIntelligence } from "@/components/ReviewIntelligence";
 import { ShoppingPersonality } from "@/components/ShoppingPersonality";
-import { ArrowLeft, Bell, Heart, Loader2 } from "lucide-react";
+import { ArrowLeft, Heart, Loader2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -61,10 +58,8 @@ function DashboardContent() {
   const [error, setError] = useState<string | null>(null);
   const [featureMessage, setFeatureMessage] = useState<string | null>(null);
   const [favoriteId, setFavoriteId] = useState<number | null>(null);
-  const [trackingId, setTrackingId] = useState<number | null>(null);
   const [statusChecked, setStatusChecked] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
-  const [trackBusy, setTrackBusy] = useState(false);
   type StepStatus = "pending" | "scanning" | "completed";
   const [timelineSteps, setTimelineSteps] = useState<{ id: number; message: string; status: StepStatus }[]>([
     { id: 1, message: "Link alındı", status: "pending" },
@@ -122,21 +117,17 @@ function DashboardContent() {
     return () => { mounted = false; };
   }, [url]);
 
-  // Ürün açıldığında favori / fiyat takibi durumunu kontrol et.
+  // Ürün açıldığında favori durumunu kontrol et.
   useEffect(() => {
     if (!result) return;
     const productUrl = result.sourceUrl || url;
     let active = true;
     (async () => {
-      const [favRes, trackRes] = await Promise.all([getFavorites(), getPriceTracking()]);
+      const favRes = await getFavorites();
       if (!active) return;
       if (favRes.success) {
         const match = favRes.data.items?.find((it) => it.productUrl === productUrl);
         setFavoriteId(match ? match.id : null);
-      }
-      if (trackRes.success) {
-        const match = trackRes.data.items?.find((it) => it.productUrl === productUrl);
-        setTrackingId(match ? match.id : null);
       }
       setStatusChecked(true);
     })();
@@ -200,36 +191,6 @@ function DashboardContent() {
   }
 
   if (!result) return null;
-
-  const handleTogglePriceTracking = async () => {
-    if (!result || trackBusy) return;
-    setTrackBusy(true);
-    if (trackingId !== null) {
-      const res = await deletePriceTracking(trackingId);
-      if (res.success) {
-        setTrackingId(null);
-        setFeatureMessage("Fiyat takibinden çıkarıldı.");
-      } else {
-        setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "İşlem başarısız.");
-      }
-    } else {
-      const res = await addPriceTracking({
-        productName: result.productName,
-        productUrl: result.sourceUrl || url,
-        currentPrice: result.price || "0 TL",
-        image: result.image ?? null,
-        platform: result.sourcePlatform ?? null,
-      });
-      if (res.success) {
-        setTrackingId(res.data.item?.id ?? null);
-        setFeatureMessage("Fiyat takibine eklendi!");
-      } else {
-        setFeatureMessage(res.error === "Backend bağlantısı kurulamadı." ? "Bağlantı hatası." : "Giriş yapmalısınız.");
-      }
-    }
-    setTrackBusy(false);
-    setTimeout(() => setFeatureMessage(null), 3000);
-  };
 
   const handleToggleFavorite = async () => {
     if (!result || favBusy) return;
@@ -317,19 +278,11 @@ function DashboardContent() {
               </h2>
               <p className="fl-mono mt-3 text-[24px] text-[var(--brass)]">{result.price}</p>
 
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <button
-                  onClick={handleTogglePriceTracking}
-                  disabled={!statusChecked || trackBusy}
-                  className={`fl-btn ${trackingId !== null ? "fl-btn-primary" : "fl-btn-ghost"}`}
-                >
-                  <Bell className="h-4 w-4" />
-                  {trackingId !== null ? "Takipten Çıkar" : "Fiyat Takibi"}
-                </button>
+              <div className="mt-5">
                 <button
                   onClick={handleToggleFavorite}
                   disabled={!statusChecked || favBusy}
-                  className={`fl-btn ${favoriteId !== null ? "fl-btn-primary" : "fl-btn-ghost"}`}
+                  className={`fl-btn w-full ${favoriteId !== null ? "fl-btn-primary" : "fl-btn-ghost"}`}
                 >
                   <Heart className={`h-4 w-4 ${favoriteId !== null ? "fill-current" : ""}`} />
                   {favoriteId !== null ? "Favoriden Çıkar" : "Favorilere Ekle"}
