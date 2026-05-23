@@ -23,6 +23,11 @@
   --font-mono-ui: var(--font-jetbrains), "JetBrains Mono", ui-monospace, monospace;
   --font-sans-ui: var(--font-space), "Space Grotesk", system-ui, sans-serif;
 
+  /* aliases used by the cinematic corridor (components/corridor) */
+  --serif: var(--font-serif-ui);
+  --mono: var(--font-mono-ui);
+  --sans: var(--font-sans-ui);
+
   /* ── tema yüzeyleri (koyu = varsayılan) ───────────────── */
   --bg-page: #0a0908;
   --bg-deep: #0e0d0b;

@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# claude code local agent files (memory, settings)
+.claude/
+
 # SQLite
 *.db
 backend/app.db
