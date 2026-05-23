@@ -9,7 +9,8 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { loginUser, registerUser, forgotPassword } from "@/lib/apiClient";
+import Link from "next/link";
+import { loginUser, registerUser, forgotPassword, logoutUser, type AuthUser } from "@/lib/apiClient";
 import { rand } from "./rng";
 
 type AuthMode = "login" | "register" | "forgot" | null;
@@ -34,6 +35,8 @@ export function Hero() {
   const [url, setUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [authMode, setAuthMode] = useState<AuthMode>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Pre-fill from ?url= query param on mount
   useEffect(() => {
@@ -41,6 +44,46 @@ export function Hero() {
     const urlParam = params.get("url");
     if (urlParam) setUrl(decodeURIComponent(urlParam));
   }, []);
+
+  // Track auth state: read stored user, react to login/logout (filtre-auth-changed)
+  useEffect(() => {
+    const read = () => {
+      try {
+        const raw = localStorage.getItem("filtre_user");
+        setUser(raw ? (JSON.parse(raw) as AuthUser) : null);
+      } catch {
+        setUser(null);
+      }
+    };
+    const t = window.setTimeout(read, 0); // defer setState out of effect body
+    window.addEventListener("filtre-auth-changed", read);
+    window.addEventListener("storage", read);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("filtre-auth-changed", read);
+      window.removeEventListener("storage", read);
+    };
+  }, []);
+
+  // Close the user menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".hero__user")) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
+
+  const handleLogout = () => {
+    logoutUser(); // clears localStorage + dispatches filtre-auth-changed
+    setUser(null);
+    setMenuOpen(false);
+  };
+
+  const fullName = user
+    ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.name
+    : "";
 
   // drifting motes
   const motes = useMemo(() => {
@@ -115,20 +158,60 @@ export function Hero() {
         </div>
 
         <div className="hero__auth">
-          <button
-            type="button"
-            className="auth-btn auth-btn--ghost"
-            onClick={() => setAuthMode("login")}
-          >
-            Giriş Yap
-          </button>
-          <button
-            type="button"
-            className="auth-btn auth-btn--solid"
-            onClick={() => setAuthMode("register")}
-          >
-            Kayıt Ol
-          </button>
+          {user ? (
+            <div className="hero__user">
+              <button
+                type="button"
+                className="auth-btn auth-btn--ghost"
+                onClick={() => setMenuOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                {user.firstName || user.name || "Hesabım"} ▾
+              </button>
+              {menuOpen && (
+                <div className="hero__menu" role="menu">
+                  <div className="hero__menu-head">
+                    <span className="hero__menu-name">{fullName}</span>
+                    <span className="hero__menu-email">{user.email}</span>
+                  </div>
+                  <Link href="/profile" className="hero__menu-item" onClick={() => setMenuOpen(false)}>
+                    Profil Görüntüle
+                  </Link>
+                  <Link href="/history" className="hero__menu-item" onClick={() => setMenuOpen(false)}>
+                    Analiz Geçmişi
+                  </Link>
+                  <Link href="/favorites" className="hero__menu-item" onClick={() => setMenuOpen(false)}>
+                    Favoriler
+                  </Link>
+                  <button
+                    type="button"
+                    className="hero__menu-item hero__menu-item--logout"
+                    onClick={handleLogout}
+                  >
+                    Çıkış Yap
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="auth-btn auth-btn--ghost"
+                onClick={() => setAuthMode("login")}
+              >
+                Giriş Yap
+              </button>
+              <button
+                type="button"
+                className="auth-btn auth-btn--solid"
+                onClick={() => setAuthMode("register")}
+              >
+                Kayıt Ol
+              </button>
+            </>
+          )}
         </div>
       </header>
 
