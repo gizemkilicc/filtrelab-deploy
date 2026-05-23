@@ -38,16 +38,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "https://filtrelab-deploy.onrender.com",  # canlı frontend
+]
+
+# İsteğe bağlı: özel alan adı için FRONTEND_URL env değişkeni (virgülle çoklu)
+_extra_origins = os.getenv("FRONTEND_URL", "")
+ALLOWED_ORIGINS += [o.strip().rstrip("/") for o in _extra_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001",
-        "http://127.0.0.1:3002",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
+    # Tüm Render alt alanlarını (preview/yeni servis adları dahil) kapsa
+    allow_origin_regex=r"https://[a-zA-Z0-9-]+\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
