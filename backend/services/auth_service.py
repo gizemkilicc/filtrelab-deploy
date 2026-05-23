@@ -79,7 +79,7 @@ def create_user(
         last_name=last_name.strip() or None,
         email=email.lower().strip(),
         password_hash=hash_password(password),
-        is_verified=False,
+        is_verified=True,  # e-posta doğrulaması atlandı: kayıt sonrası direkt giriş
         token_version=1,
     )
     db.add(user)

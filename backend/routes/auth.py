@@ -130,16 +130,10 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
     user = create_user(db, first_name=first_name, last_name=last_name, email=email, password=password)
 
-    # Send verification email (prints link to console if SMTP not configured)
-    try:
-        token = create_email_verification_token(db, user.id)
-        send_verification_email(email, token)
-    except Exception as e:
-        print(f"[auth] verification email error: {e}")
-
+    # E-posta doğrulaması kaldırıldı — kayıt sonrası direkt giriş yapılabilir.
     return {
         "success": True,
-        "message": "Kayıt başarılı. E-posta adresinize doğrulama bağlantısı gönderildi.",
+        "message": "Kayıt başarılı. Artık giriş yapabilirsiniz.",
         "userId": user.id,
     }
 
@@ -152,11 +146,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı.")
 
-    if not user.is_verified:
-        raise HTTPException(
-            status_code=403,
-            detail="E-posta adresiniz henüz doğrulanmamış. Lütfen e-postanızdaki doğrulama bağlantısına tıklayın.",
-        )
+    # E-posta doğrulama şartı kaldırıldı: doğrulanmamış (eski) hesaplar da giriş yapabilir.
 
     access_token = create_access_token(user.id, user.email, _token_version(user))
 
